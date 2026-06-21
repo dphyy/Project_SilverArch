@@ -1,0 +1,8 @@
+data/cases.json
+data/audio/*
+!data/audio/.gitkeep
+.DS_Store
+node_modules/
+.env
+.env.*
+!.env.example

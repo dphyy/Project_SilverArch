@@ -1,0 +1,13 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>SilverArch · Officer queue</title><link rel="stylesheet" href="/styles.css"></head>
+<body class="officer-body">
+  <header class="topbar"><a class="brand" href="/">SilverArch</a><nav><a href="/">Citizen call</a><a href="/officer.html" aria-current="page">Officer view</a></nav></header>
+  <main class="dashboard">
+    <section class="dashboard-head"><div><p class="eyebrow">SSO workspace</p><h1>After-hours review queue</h1><p class="muted">Urgent risk first, then longest waiting.</p></div><button id="refresh" class="secondary">Refresh cases</button></section>
+    <section class="stats"><article><span id="case-count">—</span><small>Waiting</small></article><article><span id="urgent-count">—</span><small>Urgent risk</small></article><article><span id="review-count">—</span><small>Manual review</small></article></section>
+    <div class="workspace"><section><h2>Cases</h2><div id="case-list" class="case-list"></div></section><section id="case-detail" class="detail empty"><p>Select a case to review its testimony and audit details.</p></section></div>
+  </main>
+  <script type="module" src="/officer.js"></script>
+</body>
+</html>

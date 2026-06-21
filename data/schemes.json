@@ -1,0 +1,83 @@
+[
+  {
+    "scheme_id": "smta",
+    "name": "ComCare Short-to-Medium-Term Assistance",
+    "summary": "Temporary support for people and families unable to work, seeking work, or earning a low income.",
+    "hard_ceilings": [{ "field": "citizenship", "rule": "Applicant must be a Singapore Citizen, or a PR with at least one Singapore Citizen household member." }],
+    "flexible_criteria": [
+      { "field": "pchi", "benchmark": "S$800", "note": "A guideline; exceptional medical or rental expenses may be considered." },
+      { "field": "employment_activity", "benchmark": "Job-seeking or medically unable to work", "note": "Caregiving and other personal constraints are considered holistically." }
+    ]
+  },
+  {
+    "scheme_id": "lta",
+    "name": "ComCare Long-Term Assistance",
+    "summary": "Long-term support for people permanently unable to work with little income or family support.",
+    "hard_ceilings": [
+      { "field": "citizenship", "rule": "Applicant must be a Singapore Citizen or Permanent Resident." },
+      { "field": "medical_certification", "rule": "Formal medical certification of permanent unfitness to work is required." }
+    ],
+    "flexible_criteria": [
+      { "field": "family_support", "benchmark": "Children's PCHI at or below S$800", "note": "Estrangement or children's heavy financial or medical burdens may be considered." },
+      { "field": "assets", "benchmark": "Little or no savings", "note": "Minor passive income is evaluated contextually." }
+    ]
+  },
+  {
+    "scheme_id": "medifund",
+    "name": "MediFund",
+    "summary": "Help with public healthcare bills after other subsidies and means of payment.",
+    "hard_ceilings": [
+      { "field": "citizenship", "rule": "Applicant must be a Singapore Citizen." },
+      { "field": "institution", "rule": "Treatment must be at an approved public or subsidised healthcare institution." }
+    ],
+    "flexible_criteria": [{ "field": "financial_need", "benchmark": "No fixed ceiling", "note": "A Medical Social Worker reviews bill size, savings and disposable income." }]
+  },
+  {
+    "scheme_id": "chas",
+    "name": "Community Health Assist Scheme (CHAS)",
+    "summary": "Subsidies at participating GP and dental clinics.",
+    "hard_ceilings": [{ "field": "citizenship", "rule": "Applicant must be a Singapore Citizen." }],
+    "flexible_criteria": [{ "field": "pchi", "benchmark": "Blue ≤ S$1,500; Orange S$1,501–S$2,300; Green above S$2,300", "note": "Households can appeal after an abrupt financial change." }]
+  },
+  {
+    "scheme_id": "moe_fas",
+    "name": "MOE Financial Assistance Scheme",
+    "summary": "School fee assistance for lower-income families with children in primary or secondary school.",
+    "hard_ceilings": [
+      { "field": "student_citizenship", "rule": "Student must be a Singapore Citizen." },
+      { "field": "school_type", "rule": "Student must attend a Government or Government-aided school." }
+    ],
+    "flexible_criteria": [{ "field": "income", "benchmark": "GHI ≤ S$4,000 or PCI ≤ S$1,000", "note": "School-Based FAS may cover families in distress above the benchmark." }]
+  },
+  {
+    "scheme_id": "scfa",
+    "name": "Student Care Fee Assistance",
+    "summary": "Fee support for eligible children enrolled in registered Student Care Centres.",
+    "hard_ceilings": [
+      { "field": "age", "rule": "Child must be aged 7–14." },
+      { "field": "enrollment", "rule": "Child must attend an MSF-registered Student Care Centre." },
+      { "field": "citizenship", "rule": "Child must be a Citizen or PR with a Citizen family member." }
+    ],
+    "flexible_criteria": [
+      { "field": "parent_work_hours", "benchmark": "56 hours per month", "note": "May be relaxed for job-seeking, medical unfitness or full-time caregiving." },
+      { "field": "income", "benchmark": "GHI ≤ S$4,500 or PCI ≤ S$1,125 for households of 5+", "note": "Special approval can address unique crises." }
+    ]
+  },
+  {
+    "scheme_id": "preschool_assistance",
+    "name": "Kindergarten / Preschool Fee Assistance",
+    "summary": "Fee assistance for Singaporean children at eligible preschools and kindergartens.",
+    "hard_ceilings": [
+      { "field": "child_citizenship", "rule": "Child must be a Singapore Citizen." },
+      { "field": "centre_type", "rule": "Child must attend an eligible licensed preschool or kindergarten." }
+    ],
+    "flexible_criteria": [{ "field": "income", "benchmark": "GHI up to S$12,000 or PCI up to S$3,000 for households of 5+", "note": "Special subsidies may apply for job-seeking, incapacity, legal issues, ComCare recipients or public-rental households." }]
+  },
+  {
+    "scheme_id": "comlink_plus",
+    "name": "ComLink+ Destitute Support",
+    "summary": "Goal-based, coordinated support for families facing severe hardship.",
+    "hard_ceilings": [{ "field": "citizenship", "rule": "Family unit must include at least one Singapore Citizen." }],
+    "flexible_criteria": [{ "field": "family_goals", "benchmark": "Case-by-case", "note": "Support is coordinated around qualitative milestones with a Family Coach." }]
+  }
+]
