@@ -1,72 +1,45 @@
-const HARDSHIP_RULES = [
-  { pattern: /\b(lost|lose|no) (my )?(job|work|income)\b/i, label: "Sudden job or income loss mentioned" },
-  { pattern: /\b(medical|hospital|medicine|disability|disabled|sick|illness)\b/i, label: "Medical burden mentioned" },
-  { pattern: /\b(caregiver|caregiving|look after|taking care)\b/i, label: "Caregiving duties mentioned" },
-  { pattern: /\b(estranged|no contact|family cannot|family can't)\b/i, label: "Limited family support mentioned" },
-  { pattern: /\b(rent|rental|evict|homeless|no place to stay)\b/i, label: "Housing hardship mentioned" }
-];
+import { extractTypedFacts } from "./facts.mjs";
 
 const RELEVANCE = {
-  smta: [/job|work|income|rent|food|bills|money/i],
-  lta: [/old age|elderly|permanent|disab|unable to work|long.term/i],
-  medifund: [/hospital|medical bill|treatment|clinic|medicine/i],
-  chas: [/gp|dental|clinic|chronic|medical/i],
-  moe_fas: [/school|student|primary|secondary|uniform|textbook/i],
-  scfa: [/student care|child care|after.school|working parent/i],
-  preschool_assistance: [/preschool|kindergarten|kifas|childcare/i],
-  comlink_plus: [/debt|homeless|destitute|severe hardship|rental/i]
+  smta: [/job|work|income|rent|food|bills|money/i], lta: [/old age|elderly|permanent|disab|unable to work|long.term/i],
+  medifund: [/hospital|medical bill|treatment|clinic|medicine/i], chas: [/gp|dental|clinic|chronic|medical/i],
+  moe_fas: [/school|student|primary|secondary|uniform|textbook/i], scfa: [/student care|child care|after.school|working parent/i],
+  preschool_assistance: [/preschool|kindergarten|kifas|childcare/i], comlink_plus: [/debt|homeless|destitute|severe hardship|rental/i]
 };
 
-function citizenshipFact(text) {
-  if (/\b(singapore citizen|singaporean|i am (an? )?sc)\b/i.test(text)) return "citizen";
-  if (/\b(permanent resident|i am (an? )?pr)\b/i.test(text)) return "pr";
-  if (/\b(foreigner|work permit|employment pass|not (a )?(citizen|pr))\b/i.test(text)) return "other";
-  return null;
-}
+const result = (field, value, satisfied, violationReason) => ({ field, status: value === null || value === undefined || (Array.isArray(value) && !value.length) ? "unknown" : satisfied ? "satisfied" : "violated", value, ...(satisfied || value == null ? {} : { reason: violationReason }) });
 
-function hasHardCeilingFact(field, text, citizenship) {
-  const checks = {
-    citizenship: () => Boolean(citizenship),
-    student_citizenship: () => /\b(?:student|child|son|daughter)\s+(?:is\s+)?(?:a\s+)?(?:singapore citizen|singaporean|permanent resident|pr)\b/i.test(text),
-    child_citizenship: () => /\b(?:child|son|daughter)\s+(?:is\s+)?(?:a\s+)?(?:singapore citizen|singaporean|permanent resident|pr)\b/i.test(text),
-    age: () => /\b(?:aged?|age is|is)\s+\d{1,2}(?:\s+years?\s+old)?\b/i.test(text),
-    enrollment: () => /\b(?:enrolled|attends?|goes to)\s+(?:an?\s+)?(?:msf.registered\s+)?student care/i.test(text),
-    institution: () => /\b(?:public|subsidised|subsidized|government)\s+(?:hospital|healthcare institution|clinic)\b/i.test(text),
-    school_type: () => /\b(?:government|government.aided)\s+(?:primary|secondary|special)?\s*school\b/i.test(text),
-    centre_type: () => /\b(?:licensed|anchor operator|moe)\s+(?:preschool|kindergarten|childcare centre)\b/i.test(text),
-    medical_certification: () => /\b(?:doctor|medical officer)\s+(?:certified|confirmed)|medical (?:certificate|certification).*unable to work\b/i.test(text)
+function hardCeilings(schemeId, facts) {
+  const citizenOrPr = facts.citizenship === "citizen" || facts.citizenship === "pr";
+  const childCitizenOrPr = facts.childCitizenship === "citizen" || facts.childCitizenship === "pr";
+  const map = {
+    smta: [result("citizenship", facts.citizenship, citizenOrPr, "Applicant is not an SC or PR")],
+    lta: [result("citizenship", facts.citizenship, citizenOrPr, "Applicant is not an SC or PR"), result("medical certification", facts.medicalCertification, facts.medicalCertification === true, "Permanent unfitness has not been medically certified")],
+    medifund: [result("citizenship", facts.citizenship, facts.citizenship === "citizen", "MediFund requires Singapore citizenship"), result("institution", facts.publicHealthcareInstitution, facts.publicHealthcareInstitution === true, "Treatment is not at an eligible public institution")],
+    chas: [result("citizenship", facts.citizenship, facts.citizenship === "citizen", "CHAS requires Singapore citizenship")],
+    moe_fas: [result("student citizenship", facts.childCitizenship, facts.childCitizenship === "citizen", "Student is not a Singapore Citizen"), result("school type", facts.governmentSchool, facts.governmentSchool === true, "School type is not eligible")],
+    scfa: [result("child age", facts.childAges, facts.childAges.length ? facts.childAges.some((age) => age >= 7 && age <= 14) : false, "No stated child is aged 7–14"), result("student care enrolment", facts.studentCareEnrolled, facts.studentCareEnrolled === true, "Child is not enrolled in eligible Student Care"), result("child citizenship", facts.childCitizenship, childCitizenOrPr, "Child citizenship requirement is not met")],
+    preschool_assistance: [result("child citizenship", facts.childCitizenship, facts.childCitizenship === "citizen", "Child is not a Singapore Citizen"), result("centre type", facts.eligiblePreschool, facts.eligiblePreschool === true, "Preschool or kindergarten is not eligible")],
+    comlink_plus: [result("citizenship", facts.citizenship, facts.citizenship === "citizen", "No Singapore Citizen family member was stated")]
   };
-  return checks[field]?.() || false;
+  return map[schemeId] || [];
 }
 
-export function triageTranscript(text, schemes) {
-  if (!text?.trim()) return { status: "manual-review", shortlist: [], reason: "No usable transcript" };
-  const citizenship = citizenshipFact(text);
-  const hardships = HARDSHIP_RULES.filter((rule) => rule.pattern.test(text)).map((rule) => rule.label);
+export function triageTranscript(text, schemes, evidence = []) {
+  if (!text?.trim()) return { status: "manual-review", shortlist: [], reason: "No usable transcript", extractedFacts: {} };
+  const facts = extractTypedFacts(text);
+  const hardships = Object.entries(facts.hardship).filter(([, present]) => present).map(([name]) => name.replace(/([A-Z])/g, " $1").toLowerCase());
   const evaluated = schemes.map((scheme) => {
-    const missingFields = scheme.hard_ceilings
-      .map((item) => item.field)
-      .filter((field) => !hasHardCeilingFact(field, text, citizenship));
+    const ceilingResults = hardCeilings(scheme.scheme_id, facts);
+    const violations = ceilingResults.filter((item) => item.status === "violated");
+    const unknown = ceilingResults.filter((item) => item.status === "unknown");
     const relevanceHits = (RELEVANCE[scheme.scheme_id] || []).filter((pattern) => pattern.test(text)).length;
-    const excluded = citizenship === "other" && scheme.hard_ceilings.some((item) => item.field.includes("citizenship"));
-    const appealRelevant = hardships.length && scheme.flexible_criteria.length ? hardships : [];
-    const score = relevanceHits * 3 + appealRelevant.length - missingFields.length;
-    return {
-      schemeId: scheme.scheme_id,
-      name: scheme.name,
-      excluded,
-      softScore: relevanceHits > 0 ? (appealRelevant.length ? "borderline" : "likely relevant") : "insufficient context",
-      insufficientInformation: missingFields.map((field) => `${field.replaceAll("_", " ")} not stated`),
-      appealRelevant,
-      reasoning: relevanceHits > 0 ? `Testimony contains context relevant to ${scheme.name}. Officer assessment is still required.` : "Not enough scheme-specific context was captured.",
-      score
-    };
+    const appealLabels = { medical: "Medical burden mentioned", jobLoss: "Job loss mentioned", caregiving: "Caregiving burden mentioned", estrangement: "Family estrangement mentioned", housing: "Housing hardship mentioned" };
+    const appealRelevant = hardships.length && scheme.flexible_criteria.length ? Object.entries(facts.hardship).filter(([, present]) => present).map(([key]) => appealLabels[key] || `${key} hardship mentioned`) : [];
+    const evidenceRefs = evidence.filter((item) => ["income", "employment", "medical", "housing", "caregiving", "family", "education", "citizenship", "age"].includes(item.category)).slice(0, 4).map(({ id, text: quote, start, sentenceStart, category }) => ({ id, quote, start, sentenceStart, category }));
+    const score = relevanceHits * 3 + appealRelevant.length - unknown.length;
+    return { schemeId: scheme.scheme_id, name: scheme.name, excluded: violations.length > 0, hardCeilings: ceilingResults, softScore: relevanceHits ? (appealRelevant.length ? "borderline" : "likely relevant") : "insufficient context", insufficientInformation: unknown.map((item) => `${item.field} not stated`), appealRelevant, reasoning: relevanceHits ? `Captured testimony contains context relevant to ${scheme.name}; an officer must assess the full circumstances.` : "Not enough scheme-specific context was captured.", evidenceRefs, exclusionReasons: violations.map((item) => item.reason), score };
   });
   const shortlist = evaluated.filter((item) => !item.excluded).sort((a, b) => b.score - a.score).slice(0, 3);
-  return {
-    status: shortlist.some((item) => item.insufficientInformation.length) ? "manual-review" : "draft-ready",
-    extractedFacts: { citizenship, hardships },
-    shortlist,
-    excluded: evaluated.filter((item) => item.excluded).map((item) => ({ schemeId: item.schemeId, reason: "Stated citizenship does not meet the scheme requirement" }))
-  };
+  return { status: shortlist.some((item) => item.insufficientInformation.length) ? "manual-review" : "draft-ready", extractedFacts: facts, shortlist, excluded: evaluated.filter((item) => item.excluded).map((item) => ({ schemeId: item.schemeId, reasons: item.exclusionReasons })) };
 }

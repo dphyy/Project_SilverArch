@@ -4,22 +4,26 @@ An after-hours ComCare voice-intake MVP with a real Singapore-time gate, explici
 
 ## Run
 
-Requires Node.js 20 or later. There are no third-party dependencies.
+Requires Node.js 20 or later. Install the local document-generation dependencies once:
 
 ```sh
+npm install
 npm test
 npm run dev
 ```
 
 Open `http://localhost:3000`. Use the **2am · after hours** demo control to exercise recording, then open the Officer view.
 
-## Configure ElevenLabs
+## Configure providers
 
 Open `.env` and paste your key after the equals sign:
 
 ```dotenv
 ELEVENLABS_API_KEY=your_real_key_here
 ELEVENLABS_STT_MODEL=scribe_v2
+ELEVENLABS_DUBBING_ENABLED=true
+MERALION_API_URL=http://meralion.org:8010
+MERALION_API_KEY=your_meralion_key_here
 ```
 
 Restart `npm run dev` after changing `.env`. The key is read only by the Node server; it is never sent to the browser. `.env` is ignored by Git, while `.env.example` documents the required variables safely.
@@ -34,6 +38,8 @@ The server and client independently enforce ComCare's 7am–midnight Singapore h
 
 `src/services/asr.mjs` always attempts the MERaLiON provider first. Only an error or timeout activates ElevenLabs Scribe v2. The normalized result stores provider attribution, fallback reason, detected language, word timestamps, and explainable low-confidence flags.
 
+Non-English testimony is translated to English through MERaLiON first, then ElevenLabs Dubbing. The dashboard preserves the timestamped original above the English transcript and records translation attribution or failure without exposing keys.
+
 ### Safety and privacy signals
 
 Urgency screening is a separate, priority pass and immediately shows the citizen an existing 24-hour resource when risk language is detected. NRIC/FIN and phone matches are proposals only; officers must verify them.
@@ -44,21 +50,31 @@ The triage layer shortlists up to three structured schemes. It keeps missing har
 
 ### Evidence-linked officer review
 
-The dashboard sorts urgent and waiting cases, displays independent review reasons, and makes timestamped transcript words clickable so an officer can jump to the supporting audio. Accept, escalate, and keep-in-review decisions persist and append an audit event.
+The dashboard sorts urgent and waiting cases, displays independent review reasons, and makes timestamped transcript words clickable so an officer can jump to the supporting audio. Escalate and keep-in-review decisions persist and append an audit event.
 
 Important phrases are marked by category—personal details, income/employment/housing, health/wellbeing, and family/care/education. Every marker retains its source word range and audio timestamps. A caller rundown beneath the transcript quotes the extracted characteristics and lists core details the officer still needs to ask for.
 
-## Current boundary
+The citizen reviews or re-records audio before entering a required Singapore callback number. Officers see the full number only in the selected case. They can edit the verified transcript, summary, facts, shortlist reasoning and notes; confirm or reject PII proposals; and persist a review decision with an audit entry.
 
-- MERaLiON remains a stub until endpoint details are supplied. ElevenLabs Scribe v2 is the working fallback when `ELEVENLABS_API_KEY` is set.
+Use **Load demo fixtures** to add the seven fixed fictional cases and **Reset fixtures** to remove only those cases.
+
+### Editable supporting reports
+
+**Generate report** replaces the former Accept action. It remains disabled until the officer has reviewed the transcript, summary, facts, scheme reasoning, PII proposals and review flags; entered their name, designation and SSO; completed the three consolidation sections; and signed the declaration. A visible checklist identifies every missing item, and the server independently revalidates the gate.
+
+Generated reports open on a dedicated editable page with the case audio and timestamped evidence alongside the draft. Draft revisions autosave explicitly to `data/reports/`, finalized versions are immutable, and later edits create a new amended version. Finalized reports download as genuine A4 DOCX or PDF files generated locally with `docx` and `pdfkit`. No additional AI API receives report data.
+
+The output is a **SilverArch Supporting Case Report for SSO Review**, not a government-issued form. It contains no crest or claim of agency endorsement and continues to separate triage support from eligibility decisions.
+
+## Safety boundary
+
 - Triage rules are intentionally conservative and need validation by ComCare-domain practitioners before any real-world use.
 - Cases and audio are stored locally under `data/` and are not production-secure storage.
-- Officer action buttons are visual placeholders in this foundation.
+- SilverArch supports triage, not eligibility. Real telephony, multi-agency integrations, production case writes, authentication and production storage are outside this MVP.
 
-## Suggested next milestone
+## Next production steps
 
-1. Add the ElevenLabs key and run fixed clear/noisy/Singlish test recordings.
-2. Obtain MERaLiON endpoint credentials and implement the primary provider.
-3. Expand typed fact extraction for age, enrolment, institution type and household composition.
-4. Add officer editing for transcripts, redaction proposals and triage reasoning.
-5. Move audio/cases from local files to encrypted storage and authenticated officer access.
+1. Validate the hosted MERaLiON request/response contract and ElevenLabs Dubbing entitlement with non-sensitive recordings.
+2. Run domain review of every hard ceiling, flexible criterion and safety phrase.
+3. Add authenticated officer access, encrypted production storage and retention controls.
+4. Conduct accessibility, multilingual and noisy-audio evaluation before any real caller pilot.

@@ -6,6 +6,9 @@ import { screenUrgency } from "../src/domain/urgency.mjs";
 import { proposePiiRedactions } from "../src/domain/pii.mjs";
 import { triageTranscript } from "../src/domain/triage.mjs";
 import { buildCallerProfile, extractEvidence } from "../src/domain/evidence.mjs";
+import { normalizeSingaporePhone } from "../src/domain/contact.mjs";
+import { extractTypedFacts } from "../src/domain/facts.mjs";
+import { parseByteRange } from "../src/domain/audio.mjs";
 
 test("hotline is open from 7am Singapore time", () => {
   assert.equal(getTimeGate(dateFromDemoHour(7)).mode, "open");
@@ -76,4 +79,57 @@ test("urgent language and proposed PII are separate signals", () => {
   const proposals = proposePiiRedactions("Call me at 9123 4567, NRIC S1234567D");
   assert.deepEqual(proposals.map((item) => item.type), ["possible NRIC/FIN", "possible phone number"]);
   assert.ok(proposals.every((item) => item.status === "proposed"));
+});
+
+test("Singapore callback numbers are validated and normalized", () => {
+  assert.equal(normalizeSingaporePhone("+65 9123-4567"), "+6591234567");
+  assert.equal(normalizeSingaporePhone("6123 4567"), "+6561234567");
+  assert.equal(normalizeSingaporePhone("71234567"), null);
+});
+
+test("spoken age, name strength, indirect income and sentence starts are extracted", () => {
+  const text = "Yesterday was difficult. I'm Bobby, and I am thirty-five years old. My income is basically zero.";
+  const words = text.split(" ").map((word, index) => ({ text: word, start: index * 0.5, end: index * 0.5 + 0.4 }));
+  const evidence = extractEvidence({ text, words });
+  assert.equal(evidence.find((item) => item.category === "name").requiresVerification, true);
+  assert.match(evidence.find((item) => item.category === "age").text, /thirty-five years old/i);
+  assert.ok(evidence.find((item) => item.category === "age").sentenceStart > 0);
+  const facts = extractTypedFacts(text);
+  assert.equal(facts.applicantAge, 35);
+  assert.equal(facts.householdIncome, 0);
+});
+
+test("MC is surfaced as work interruption and caller rundown removes overlapping age matches", () => {
+  const text = "I'm Bobby. I am thirty-five years old, Singaporean. My income is basically zero because I'm on MC.";
+  const words = text.split(" ").map((word, index) => ({ text: word, start: index * 0.5, end: index * 0.5 + 0.4 }));
+  const evidence = extractEvidence({ text, words });
+  assert.equal(evidence.filter((item) => item.category === "age").length, 1);
+  assert.equal(evidence.filter((item) => item.category === "employment" && /on MC/i.test(item.text)).length, 1);
+  assert.equal(evidence.filter((item) => item.category === "income" && /on MC/i.test(item.text)).length, 0);
+  const profile = buildCallerProfile(evidence);
+  assert.equal(new Set(profile.characteristics.map((item) => `${item.category}:${item.value.toLowerCase()}`)).size, profile.characteristics.length);
+  assert.ok(profile.characteristics.some((item) => item.category === "employment" && /on MC/i.test(item.value)));
+  assert.equal(extractTypedFacts(text).hardship.medical, true);
+});
+
+test("hard ceilings remain unknown until stated and only violations exclude", () => {
+  const scheme = [{ scheme_id: "chas", name: "CHAS", hard_ceilings: [], flexible_criteria: [] }];
+  const unknown = triageTranscript("I need help with a clinic bill", scheme);
+  assert.equal(unknown.shortlist[0].hardCeilings[0].status, "unknown");
+  const violated = triageTranscript("I am a foreigner and need help with a clinic bill", scheme);
+  assert.equal(violated.shortlist.length, 0);
+  assert.equal(violated.excluded[0].schemeId, "chas");
+});
+
+test("urgency categories remain distinct", () => {
+  assert.equal(screenUrgency("I want to end my life").category, "self-harm");
+  assert.equal(screenUrgency("My partner is attacking me now").category, "family-violence");
+  assert.equal(screenUrgency("A stranger has a weapon and I am in danger").category, "immediate-danger");
+});
+
+test("audio byte ranges support ordinary, suffix and invalid requests", () => {
+  assert.deepEqual(parseByteRange("bytes=10-19", 100), { start: 10, end: 19 });
+  assert.deepEqual(parseByteRange("bytes=-20", 100), { start: 80, end: 99 });
+  assert.deepEqual(parseByteRange("bytes=90-", 100), { start: 90, end: 99 });
+  assert.equal(parseByteRange("bytes=120-130", 100), false);
 });

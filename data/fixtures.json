@@ -1,0 +1,9 @@
+[
+  { "id": "clear-english", "label": "Clear English", "languageCode": "en", "text": "My name is Alice Tan. I am a Singapore citizen and I am thirty-five years old. I lost my job and my household income is basically zero. I have two children." },
+  { "id": "singlish", "label": "Singlish", "languageCode": "en", "text": "I'm Bobby, lah. Singaporean, thirty-five this year. Now sole breadwinner but on MC, no money already. I have two children." },
+  { "id": "mandarin-hokkien", "label": "Mandarin / Hokkien", "languageCode": "zh", "text": "我叫陈美玲。我今年四十二岁，是新加坡公民。现在没有收入，还有两个孩子要照顾。", "english": "My name is Tan Mei Ling. I am forty-two years old and a Singapore citizen. I currently have no income and care for two children." },
+  { "id": "noisy-ambiguous", "label": "Noisy / ambiguous", "languageCode": "en", "text": "My income is maybe [inaudible] and I cannot work right now.", "lowConfidence": true },
+  { "id": "missing-core", "label": "Missing citizenship or age", "languageCode": "en", "text": "I lost my job last month and I have three children. I need help with rent." },
+  { "id": "pii", "label": "PII review", "languageCode": "en", "text": "My NRIC is S1234567D and my phone number is 9123 4567. I have no income." },
+  { "id": "urgent-risk", "label": "Urgent risk language", "languageCode": "en", "text": "My partner is attacking me now and I am in immediate danger. I need help." }
+]

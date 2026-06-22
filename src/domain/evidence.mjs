@@ -1,4 +1,14 @@
+import { NUMBER_WORDS } from "./numbers.mjs";
+
 const CATEGORY_RULES = [
+  {
+    category: "name",
+    label: "Caller name",
+    patterns: [
+      { regex: /\b(?:my name is|you can call me)\s+([A-Za-z][A-Za-z'-]{1,30})\b/gi, requiresVerification: false },
+      { regex: /\bI(?:'m| am)\s+([A-Za-z][A-Za-z'-]{1,30})[,.]/gi, requiresVerification: true }
+    ]
+  },
   {
     category: "citizenship",
     label: "Citizenship / residency",
@@ -7,7 +17,7 @@ const CATEGORY_RULES = [
   {
     category: "age",
     label: "Age",
-    patterns: [/\b(?:i am|i'm|aged?)\s+\d{1,3}(?:\s+years?\s+old)?\b/gi, /\b\d{1,3}\s+years?\s+old\b/gi]
+    patterns: [new RegExp(`\\b(?:i am|i'm|aged?)\\s+(?:\\d{1,3}|${NUMBER_WORDS})(?:\\s+years?\\s+old)?\\b`, "gi")]
   },
   {
     category: "income",
@@ -15,7 +25,7 @@ const CATEGORY_RULES = [
     patterns: [
       /\b(?:household|monthly|per capita|my)?\s*(?:income|salary|pay|earnings?)\s+(?:is|are|was|about|around|only)?\s*(?:s\$|\$)?\s*\d[\d,]*(?:\s+dollars?)?\b/gi,
       /\b(?:i|we)\s+(?:earn|make|get paid|bring home)\s+(?:about|around|only)?\s*(?:s\$|\$)?\s*\d[\d,]*(?:\s+dollars?)?\b/gi,
-      /\b(?:no income|low income|cannot afford|can't afford|struggling financially|money is tight|behind on bills?|in debt)\b/gi
+      /\b(?:no income|zero income|basically zero|low income|no money|sole breadwinner|cannot afford|can't afford|struggling financially|money is tight|behind on bills?|in debt)\b/gi
     ]
   },
   {
@@ -23,6 +33,7 @@ const CATEGORY_RULES = [
     label: "Employment",
     patterns: [
       /\b(?:lost my job|lost our job|retrenched|unemployed|jobless|looking for (?:a )?job|unable to work|cannot work|can't work)\b/gi,
+      /\b(?:on (?:medical leave|mc)|issued (?:an? )?mc)\b/gi,
       /\b(?:i|we)\s+(?:work|worked)\s+(?:as|part.time|full.time|casual|temporary)[^,.!?]{0,45}/gi
     ]
   },
@@ -30,7 +41,7 @@ const CATEGORY_RULES = [
     category: "family",
     label: "Household and children",
     patterns: [
-      /\b(?:i|we)\s+have\s+(?:\d+|one|two|three|four|five|six)\s+(?:children|kids?|dependants?)\b/gi,
+      new RegExp(`\\b(?:i|we)\\s+have\\s+(?:\\d+|${NUMBER_WORDS})\\s+(?:children|kids?|dependants?)\\b`, "gi"),
       /\b(?:single (?:mother|father|parent)|family of \d+|household of \d+|live with (?:my|our))[^,.!?]{0,45}/gi,
       /\b(?:my|our)\s+(?:son|daughter|child|children|kids?)(?:\s+is|\s+are)?[^,.!?]{0,35}/gi
     ]
@@ -87,14 +98,15 @@ export function extractEvidence(transcript = {}) {
   const evidence = [];
 
   for (const rule of CATEGORY_RULES) {
-    for (const pattern of rule.patterns) {
+    for (const patternDefinition of rule.patterns) {
+      const pattern = patternDefinition.regex || patternDefinition;
       pattern.lastIndex = 0;
       for (const match of text.matchAll(pattern)) {
         const range = wordRange(offsets, match.index, match.index + match[0].length);
         if (!range) continue;
         const startWord = words[range.startWord];
         const endWord = words[range.endWord];
-        const duplicate = evidence.some((item) => item.category === rule.category && item.startWord === range.startWord && item.endWord === range.endWord);
+        const duplicate = evidence.some((item) => item.category === rule.category && item.startWord <= range.endWord && item.endWord >= range.startWord);
         if (!duplicate) evidence.push({
           id: `${rule.category}-${range.startWord}-${range.endWord}`,
           category: rule.category,
@@ -102,6 +114,8 @@ export function extractEvidence(transcript = {}) {
           text: words.slice(range.startWord, range.endWord + 1).map((word) => word.text).join(" "),
           start: startWord.start,
           end: endWord.end,
+          sentenceStart: sentenceStart(words, range.startWord),
+          requiresVerification: Boolean(patternDefinition.requiresVerification),
           ...range
         });
       }
@@ -111,20 +125,26 @@ export function extractEvidence(transcript = {}) {
   return evidence.sort((a, b) => a.start - b.start || a.end - b.end);
 }
 
+function sentenceStart(words, wordIndex) {
+  let startIndex = wordIndex;
+  while (startIndex > 0 && !/[.!?][”"']?$/.test(words[startIndex - 1].text)) startIndex -= 1;
+  return Number(words[startIndex]?.start) || 0;
+}
+
 export function buildCallerProfile(evidence = []) {
   const byCategory = evidence.reduce((groups, item) => {
     (groups[item.category] ||= []).push(item);
     return groups;
   }, {});
   const present = [...new Set(evidence.map((item) => item.label))];
-  const priority = ["wellbeing", "medical", "income", "employment", "housing", "caregiving", "family", "education", "citizenship", "age"];
-  const characteristics = priority.flatMap((category) => (byCategory[category] || []).slice(0, 2).map((item) => ({
-    category,
-    label: item.label,
-    value: item.text,
-    start: item.start,
-    evidenceId: item.id
-  })));
+  const priority = ["name", "wellbeing", "medical", "income", "employment", "housing", "caregiving", "family", "education", "citizenship", "age"];
+  const seenCharacteristics = new Set();
+  const characteristics = priority.flatMap((category) => (byCategory[category] || []).filter((item) => {
+    const key = `${category}:${item.text.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim()}`;
+    if (seenCharacteristics.has(key)) return false;
+    seenCharacteristics.add(key);
+    return true;
+  }).slice(0, 2).map((item) => ({ category, label: item.label, value: item.text, start: item.start, sentenceStart: item.sentenceStart, requiresVerification: item.requiresVerification, evidenceId: item.id })));
   return {
     summary: present.length
       ? `Caller mentioned ${present.slice(0, 4).join(", ").toLowerCase()}${present.length > 4 ? ` and ${present.length - 4} other relevant area${present.length - 4 === 1 ? "" : "s"}` : ""}. These are intake signals for officer review, not eligibility findings.`

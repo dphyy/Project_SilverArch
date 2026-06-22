@@ -1,9 +1,48 @@
 export class AsrUnavailableError extends Error {}
 
-export class StubMeralionProvider {
+export class MeralionProvider {
   name = "meralion";
-  async transcribe() {
-    throw new AsrUnavailableError("MERaLiON endpoint is not configured");
+
+  constructor({
+    apiKey = process.env.MERALION_API_KEY,
+    baseUrl = process.env.MERALION_API_URL || "http://meralion.org:8010",
+    timeoutMs = Number(process.env.MERALION_TIMEOUT_MS || 30_000),
+    fetchImpl = globalThis.fetch
+  } = {}) {
+    this.apiKey = apiKey;
+    this.baseUrl = baseUrl.replace(/\/$/, "");
+    this.timeoutMs = timeoutMs;
+    this.fetch = fetchImpl;
+  }
+
+  async transcribe({ buffer, mimeType = "audio/webm" }) {
+    if (!this.apiKey) throw new AsrUnavailableError("MERALION_API_KEY is not configured");
+    const audioUrl = `data:${mimeType};base64,${buffer.toString("base64")}`;
+    const response = await this.fetch(`${this.baseUrl}/audio/transcription`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${this.apiKey}`, "content-type": "application/json" },
+      body: JSON.stringify({ audio_url: audioUrl }),
+      signal: AbortSignal.timeout(this.timeoutMs)
+    });
+    if (!response.ok) throw new Error(`MERaLiON transcription failed (${response.status}): ${(await response.text()).slice(0, 240)}`);
+    const result = await response.json();
+    const rawWords = result.words || result.segments?.flatMap((segment) => segment.words || []) || [];
+    const words = rawWords.map((word) => ({
+      text: word.text || word.word || "",
+      start: Number(word.start ?? word.start_s ?? 0),
+      end: Number(word.end ?? word.end_s ?? 0),
+      speakerId: word.speaker_id || null,
+      confidence: word.confidence ?? null
+    })).filter((word) => word.text);
+    return {
+      text: result.text || result.transcript || result.transcription || words.map((word) => word.text).join(" "),
+      words,
+      segments: words.map(({ text, start, end }) => ({ text, start, end })),
+      languageCode: result.language_code || result.language || null,
+      languageProbability: result.language_probability ?? null,
+      confidenceFlags: words.some((word) => typeof word.confidence === "number" && word.confidence < 0.45)
+        ? ["MERaLiON identified low-confidence words that need audio review"] : []
+    };
   }
 }
 
@@ -44,6 +83,7 @@ export class ElevenLabsProvider {
       segments: words.map(({ text, start, end }) => ({ text, start, end })),
       languageCode: result.language_code || null,
       languageProbability: result.language_probability ?? null,
+      confidenceDetails: lowConfidenceWords.slice(0, 8).map((word) => ({ reason: "Low word confidence", text: word.text, start: word.start, end: word.end })),
       confidenceFlags: lowConfidenceWords.length
         ? [`${lowConfidenceWords.length} low-confidence word${lowConfidenceWords.length === 1 ? "" : "s"} need audio review`]
         : []
@@ -52,7 +92,7 @@ export class ElevenLabsProvider {
 }
 
 export async function transcribeWithFallback(audio, {
-  primary = new StubMeralionProvider(),
+  primary = new MeralionProvider(),
   fallback = new ElevenLabsProvider()
 } = {}) {
   try {

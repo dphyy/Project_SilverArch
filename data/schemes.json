@@ -2,6 +2,8 @@
   {
     "scheme_id": "smta",
     "name": "ComCare Short-to-Medium-Term Assistance",
+    "official_source_url": "https://www.msf.gov.sg/what-we-do/comcare",
+    "source_verified_at": "2026-06-22",
     "summary": "Temporary support for people and families unable to work, seeking work, or earning a low income.",
     "hard_ceilings": [{ "field": "citizenship", "rule": "Applicant must be a Singapore Citizen, or a PR with at least one Singapore Citizen household member." }],
     "flexible_criteria": [
@@ -12,6 +14,8 @@
   {
     "scheme_id": "lta",
     "name": "ComCare Long-Term Assistance",
+    "official_source_url": "https://www.msf.gov.sg/what-we-do/comcare",
+    "source_verified_at": "2026-06-22",
     "summary": "Long-term support for people permanently unable to work with little income or family support.",
     "hard_ceilings": [
       { "field": "citizenship", "rule": "Applicant must be a Singapore Citizen or Permanent Resident." },
@@ -25,6 +29,8 @@
   {
     "scheme_id": "medifund",
     "name": "MediFund",
+    "official_source_url": "https://www.moh.gov.sg/managing-expenses/schemes-and-subsidies/medifund",
+    "source_verified_at": "2026-06-22",
     "summary": "Help with public healthcare bills after other subsidies and means of payment.",
     "hard_ceilings": [
       { "field": "citizenship", "rule": "Applicant must be a Singapore Citizen." },
@@ -35,6 +41,8 @@
   {
     "scheme_id": "chas",
     "name": "Community Health Assist Scheme (CHAS)",
+    "official_source_url": "https://www.moh.gov.sg/managing-expenses/schemes-and-subsidies/chas/",
+    "source_verified_at": "2026-06-22",
     "summary": "Subsidies at participating GP and dental clinics.",
     "hard_ceilings": [{ "field": "citizenship", "rule": "Applicant must be a Singapore Citizen." }],
     "flexible_criteria": [{ "field": "pchi", "benchmark": "Blue ≤ S$1,500; Orange S$1,501–S$2,300; Green above S$2,300", "note": "Households can appeal after an abrupt financial change." }]
@@ -42,6 +50,8 @@
   {
     "scheme_id": "moe_fas",
     "name": "MOE Financial Assistance Scheme",
+    "official_source_url": "https://www.moe.gov.sg/financial-matters/financial-assistance",
+    "source_verified_at": "2026-06-22",
     "summary": "School fee assistance for lower-income families with children in primary or secondary school.",
     "hard_ceilings": [
       { "field": "student_citizenship", "rule": "Student must be a Singapore Citizen." },
@@ -52,6 +62,8 @@
   {
     "scheme_id": "scfa",
     "name": "Student Care Fee Assistance",
+    "official_source_url": "https://www.msf.gov.sg/what-we-do/student-care/for-parents/student-care-fee-assistance",
+    "source_verified_at": "2026-06-22",
     "summary": "Fee support for eligible children enrolled in registered Student Care Centres.",
     "hard_ceilings": [
       { "field": "age", "rule": "Child must be aged 7–14." },
@@ -66,6 +78,8 @@
   {
     "scheme_id": "preschool_assistance",
     "name": "Kindergarten / Preschool Fee Assistance",
+    "official_source_url": "https://www.ecda.gov.sg/parents/preschool-subsidies",
+    "source_verified_at": "2026-06-22",
     "summary": "Fee assistance for Singaporean children at eligible preschools and kindergartens.",
     "hard_ceilings": [
       { "field": "child_citizenship", "rule": "Child must be a Singapore Citizen." },
@@ -76,6 +90,8 @@
   {
     "scheme_id": "comlink_plus",
     "name": "ComLink+ Destitute Support",
+    "official_source_url": "https://www.msf.gov.sg/what-we-do/volunteer/find-causes/comlink",
+    "source_verified_at": "2026-06-22",
     "summary": "Goal-based, coordinated support for families facing severe hardship.",
     "hard_ceilings": [{ "field": "citizenship", "rule": "Family unit must include at least one Singapore Citizen." }],
     "flexible_criteria": [{ "field": "family_goals", "benchmark": "Case-by-case", "note": "Support is coordinated around qualitative milestones with a Family Coach." }]

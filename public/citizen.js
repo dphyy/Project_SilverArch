@@ -1,11 +1,13 @@
 const $ = (selector) => document.querySelector(selector);
-const panels = ["#open-panel", "#consent-panel", "#record-panel", "#done-panel"];
+const panels = ["#open-panel", "#consent-panel", "#record-panel", "#contact-panel", "#done-panel"];
 let gate;
 let recorder;
 let chunks = [];
 let recording;
 let timer;
 let startedAt;
+let recordingDurationMs = 0;
+let previewUrl;
 
 function show(selector) {
   panels.forEach((item) => $(item).classList.toggle("hidden", item !== selector));
@@ -33,8 +35,7 @@ $("#record").addEventListener("click", async () => {
     recorder.stop();
     clearInterval(timer);
     $("#record").classList.remove("active");
-    $("#record-status").textContent = "Recording ready. Send it when you are comfortable.";
-    $("#submit").classList.remove("hidden");
+    recordingDurationMs = Date.now() - startedAt;
     return;
   }
   try {
@@ -45,6 +46,13 @@ $("#record").addEventListener("click", async () => {
     recorder.onstop = () => {
       recording = new Blob(chunks, { type: recorder.mimeType });
       stream.getTracks().forEach((track) => track.stop());
+      if (previewUrl) URL.revokeObjectURL(previewUrl);
+      previewUrl = URL.createObjectURL(recording);
+      $("#recording-preview").src = previewUrl;
+      $("#recording-preview").classList.remove("hidden");
+      $("#recording-actions").classList.remove("hidden");
+      $("#record").classList.add("hidden");
+      $("#record-status").textContent = "Listen back, record again, or continue to contact details.";
     };
     recorder.start();
     startedAt = Date.now();
@@ -59,17 +67,41 @@ $("#record").addEventListener("click", async () => {
   }
 });
 
+$("#record-again").addEventListener("click", () => {
+  recording = null;
+  $("#recording-preview").pause();
+  $("#recording-preview").classList.add("hidden");
+  $("#recording-actions").classList.add("hidden");
+  $("#record").classList.remove("hidden");
+  $("#timer").textContent = "00:00";
+  $("#record-status").textContent = "Tap the circle to start again.";
+});
+
+$("#to-contact").addEventListener("click", () => show("#contact-panel"));
+$("#back-to-recording").addEventListener("click", () => show("#record-panel"));
+
+function normalizedPhone(value) {
+  const compact = value.trim().replace(/[\s-]/g, "").replace(/^\+65/, "");
+  return /^[3689]\d{7}$/.test(compact) ? `+65${compact}` : null;
+}
+
 $("#submit").addEventListener("click", async () => {
+  const phone = normalizedPhone($("#phone").value);
+  if (!phone) {
+    $("#contact-status").textContent = "Enter a valid 8-digit Singapore phone number.";
+    $("#phone").focus();
+    return;
+  }
   $("#submit").disabled = true;
-  $("#record-status").textContent = "Sending securely…";
+  $("#contact-status").textContent = "Sending securely…";
   const response = await fetch("/api/cases", {
     method: "POST",
-    headers: { "content-type": recording.type, ...(gate.demoOverride && { "x-demo-override": "after-hours" }) },
+    headers: { "content-type": recording.type, "x-contact-phone": phone, "x-audio-duration-ms": String(recordingDurationMs), ...(gate.demoOverride && { "x-demo-override": "after-hours" }) },
     body: recording
   });
   const body = await response.json();
   if (!response.ok) {
-    $("#record-status").textContent = body.error || "The recording could not be sent.";
+    $("#contact-status").textContent = body.error || "The recording could not be sent.";
     $("#submit").disabled = false;
     return;
   }
@@ -86,4 +118,4 @@ document.querySelectorAll("[data-hour]").forEach((button) => button.addEventList
   loadGate(hour);
 }));
 
-loadGate();
+setTimeout(() => loadGate(), 650);

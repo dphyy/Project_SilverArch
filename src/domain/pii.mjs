@@ -1,6 +1,6 @@
 const PATTERNS = [
   { type: "possible NRIC/FIN", regex: /\b[STFGM]\d{7}[A-Z]\b/gi },
-  { type: "possible phone number", regex: /\b(?:\+65\s?)?[689]\d{3}[\s-]?\d{4}\b/g }
+  { type: "possible phone number", regex: /\b(?:\+65\s?)?[3689]\d{3}[\s-]?\d{4}\b/g }
 ];
 
 export function proposePiiRedactions(text = "") {

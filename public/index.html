@@ -42,8 +42,24 @@
           <small>You do not need to state your NRIC. Speak naturally and include only what you are comfortable sharing.</small>
         </div>
         <button id="record" class="record" aria-label="Start recording"><span></span></button>
-        <button id="submit" class="primary hidden">Send for review</button>
+        <audio id="recording-preview" class="recording-preview hidden" controls></audio>
+        <div id="recording-actions" class="recording-actions hidden">
+          <button id="record-again" class="secondary">Record again</button>
+          <button id="to-contact" class="primary">Continue</button>
+        </div>
         <p id="record-status" class="muted">Tap the circle to start.</p>
+      </section>
+
+      <section id="contact-panel" class="panel hidden">
+        <p class="eyebrow">Contact details</p>
+        <h2>How can an officer reach you?</h2>
+        <div class="notice">Your phone number is collected so a Social Service Officer can contact you after reviewing your case.</div>
+        <label class="field-label" for="phone">Singapore phone number</label>
+        <input id="phone" class="text-input" type="tel" inputmode="tel" autocomplete="tel" placeholder="e.g. 9123 4567" aria-describedby="phone-help" required>
+        <p id="phone-help" class="field-help">Enter an 8-digit number, with or without +65.</p>
+        <button id="submit" class="primary">Send for review</button>
+        <button id="back-to-recording" class="text-button">Back to recording</button>
+        <p id="contact-status" class="muted"></p>
       </section>
 
       <section id="done-panel" class="panel hidden">

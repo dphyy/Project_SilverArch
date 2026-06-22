@@ -1,8 +1,11 @@
 data/cases.json
 data/audio/*
 !data/audio/.gitkeep
+data/reports/*
+!data/reports/.gitkeep
 .DS_Store
 node_modules/
 .env
 .env.*
 !.env.example
+SilverArch_plan.md
