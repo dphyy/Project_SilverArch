@@ -15,6 +15,7 @@ import { parseByteRange } from "./src/domain/audio.mjs";
 import { buildReportDraft, reportDraftReadiness, reportReadiness } from "./src/domain/report.mjs";
 import { renderReportDocx, renderReportPdf } from "./src/services/report-renderer.mjs";
 import { draftReportWithFallback, reportDraftingCapability } from "./src/services/report-drafter.mjs";
+import { evidenceExtractionCapability, extractEvidenceWithAI } from "./src/services/evidence-extractor.mjs";
 
 const ROOT = new URL(".", import.meta.url).pathname;
 await loadEnv(join(ROOT, ".env"));
@@ -68,6 +69,7 @@ async function handleApi(request, response, url) {
       elevenLabsConfigured: Boolean(process.env.ELEVENLABS_API_KEY),
       fallbackModel: process.env.ELEVENLABS_STT_MODEL || "scribe_v2",
       googleTranslate: googleTranslateCapability(),
+      evidenceExtraction: evidenceExtractionCapability(),
       reportDrafting: reportDraftingCapability()
     });
   }
@@ -199,7 +201,8 @@ async function handleApi(request, response, url) {
     transcript.originalText = transcript.text;
     const translation = transcript.transcriptionFailed ? { status: "unavailable", errors: ["Transcription failed"] } : await translateWithFallback(transcript, { buffer: audio, mimeType: audioType });
     const evidenceTranscript = translation.status === "ready" ? transcriptFromTranslation(translation.english) : transcript;
-    const evidence = extractEvidence(evidenceTranscript);
+    const evidenceExtraction = await extractEvidenceWithAI(evidenceTranscript);
+    const evidence = evidenceExtraction.evidence;
     const lowConfidence = Boolean(transcript.confidenceFlags?.length);
     const callerProfile = lowConfidence ? { summary: "Automatic summary withheld because the transcript requires confidence review.", characteristics: [], missingCoreDetails: [] } : buildCallerProfile(evidence);
     const urgency = screenUrgency(transcript.text);
@@ -221,7 +224,9 @@ async function handleApi(request, response, url) {
       translation,
       evidence,
       evidenceLanguage: translation.status === "ready" ? "english" : "original",
-      evidenceVersion: 3,
+      evidenceVersion: 4,
+      evidenceProvider: evidenceExtraction.provider,
+      ...(evidenceExtraction.error ? { evidenceProviderError: evidenceExtraction.error } : {}),
       callerProfile,
       urgency,
       piiProposals: proposePiiRedactions(transcript.text),
@@ -230,7 +235,8 @@ async function handleApi(request, response, url) {
       auditEvents: [
         { at: createdAt, actor: "system", action: "case-created", detail: `Transcribed by ${transcript.asrEngine || "no provider"}` },
         ...(transcript.fallbackReason ? [{ at: createdAt, actor: "system", action: "asr-fallback", detail: `MERaLiON fallback: ${transcript.fallbackReason}` }] : []),
-        { at: createdAt, actor: "system", action: `translation-${translation.status}`, detail: translation.provider ? `English translation by ${translation.provider}${translation.fallbackReason ? ` after fallback: ${translation.fallbackReason}` : ""}` : translation.errors?.length ? `Translation unavailable: ${translation.errors.join("; ")}` : "English translation not required" }
+        { at: createdAt, actor: "system", action: `translation-${translation.status}`, detail: translation.provider ? `English translation by ${translation.provider}${translation.fallbackReason ? ` after fallback: ${translation.fallbackReason}` : ""}` : translation.errors?.length ? `Translation unavailable: ${translation.errors.join("; ")}` : "English translation not required" },
+        { at: createdAt, actor: "system", action: `evidence-${evidenceExtraction.provider}`, detail: evidenceExtraction.error ? `Deterministic evidence retained after OpenAI error: ${evidenceExtraction.error}` : evidenceExtraction.provider === "openai" ? `OpenAI added ${evidenceExtraction.modelEvidenceCount || 0} evidence excerpt${evidenceExtraction.modelEvidenceCount === 1 ? "" : "s"}` : "Deterministic evidence extraction" }
       ]
     };
     const cases = await readCases();
@@ -328,9 +334,11 @@ function amendedReportDraft(previous, version, at) {
 }
 
 function refreshCaseAnalysis(item, schemes) {
-  if (!item.transcript?.text || item.evidenceVersion >= 3) return item;
-  const evidence = extractEvidence(item.transcript);
-  return { ...item, evidence, evidenceVersion: 3, callerProfile: buildCallerProfile(evidence), triage: triageTranscript(item.transcript.text, schemes, evidence) };
+  if (!item.transcript?.text || item.evidenceVersion >= 4) return item;
+  const analysisTranscript = item.translation?.status === "ready" ? transcriptFromTranslation(item.translation.english) : item.transcript;
+  const evidence = extractEvidence(analysisTranscript);
+  const triageText = analysisTranscript.text || item.transcript.text;
+  return { ...item, evidence, evidenceVersion: 4, evidenceProvider: item.evidenceProvider || "deterministic", callerProfile: buildCallerProfile(evidence), triage: triageTranscript(triageText, schemes, evidence) };
 }
 
 function buildFixtureCase(definition, schemes, index) {
@@ -342,7 +350,7 @@ function buildFixtureCase(definition, schemes, index) {
   const evidence = extractEvidence(analysisTranscript);
   const lowConfidence = Boolean(definition.lowConfidence);
   const triage = lowConfidence ? { status: "manual-review", shortlist: [], reason: "Automatic shortlist withheld because transcript confidence is low" } : triageTranscript(analysisTranscript.text, schemes, evidence);
-  return { id: `fixture-${definition.id}`, isFixture: true, fixtureLabel: definition.label, createdAt, status: "needs-review", audioUrl: null, audioType: null, audioDurationMs: words.at(-1)?.end * 1000 || 0, intakeLanguage: definition.languageCode === "zh" ? "zh" : "en", intakeMode: "web-call-simulator", contact: { phone: "+6590000000", maskedPhone: "+65 •••• 0000", purpose: "SSO follow-up after case review" }, transcript, translation, evidence, evidenceLanguage: definition.english ? "english" : "original", evidenceVersion: 3, callerProfile: lowConfidence ? { summary: "Automatic summary withheld because the transcript requires confidence review.", characteristics: [], missingCoreDetails: [] } : buildCallerProfile(evidence), urgency: screenUrgency(definition.text), piiProposals: proposePiiRedactions(definition.text), triage, reviewReasons: [...(transcript.confidenceFlags || []), ...(triage.status === "manual-review" ? ["Triage requires officer review"] : [])], auditEvents: [{ at: createdAt, actor: "system", action: "fixture-loaded", detail: definition.label }] };
+  return { id: `fixture-${definition.id}`, isFixture: true, fixtureLabel: definition.label, createdAt, status: "needs-review", audioUrl: null, audioType: null, audioDurationMs: words.at(-1)?.end * 1000 || 0, intakeLanguage: definition.languageCode === "zh" ? "zh" : "en", intakeMode: "web-call-simulator", contact: { phone: "+6590000000", maskedPhone: "+65 •••• 0000", purpose: "SSO follow-up after case review" }, transcript, translation, evidence, evidenceLanguage: definition.english ? "english" : "original", evidenceVersion: 4, evidenceProvider: "deterministic", callerProfile: lowConfidence ? { summary: "Automatic summary withheld because the transcript requires confidence review.", characteristics: [], missingCoreDetails: [] } : buildCallerProfile(evidence), urgency: screenUrgency(definition.text), piiProposals: proposePiiRedactions(definition.text), triage, reviewReasons: [...(transcript.confidenceFlags || []), ...(triage.status === "manual-review" ? ["Triage requires officer review"] : [])], auditEvents: [{ at: createdAt, actor: "system", action: "fixture-loaded", detail: definition.label }] };
 }
 
 async function serveStatic(response, pathname) {

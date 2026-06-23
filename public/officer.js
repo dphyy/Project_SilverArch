@@ -42,10 +42,11 @@ function renderDetail(id) {
     ...(item.reviewReasons || []).map((text) => ({ kind: "confidence", text })),
     ...(item.piiProposals || []).filter((proposal) => proposal.status === "proposed").map((proposal) => ({ kind: "pii", text: `${proposal.type} needs officer confirmation` }))
   ];
-  const evidence = item.evidence || [];
+  const evidence = displayEvidence(item);
   const primaryTranscript = evidenceDisplayTranscript(item);
   const words = primaryTranscript.words;
-  const evidenceForWord = (index) => primaryTranscript.highlightEvidence && evidence.find((fact) => index >= fact.startWord && index <= fact.endWord);
+  const evidenceMarkers = buildEvidenceWordMarkers(evidence, words, primaryTranscript.highlightEvidence);
+  const evidenceForWord = (index) => evidenceMarkers.get(index);
   const transcriptHtml = words.length ? words.map((word, index) => {
     const marker = evidenceForWord(index);
     const classes = marker ? `word seek-audio evidence-word evidence-${marker.category}` : "word seek-audio";
@@ -58,11 +59,9 @@ function renderDetail(id) {
   const profile = item.callerProfile || { summary: "This case predates automatic evidence extraction.", characteristics: [], missingCoreDetails: [] };
   const duration = Math.max(Number(item.audioDurationMs || 0) / 1000, ...words.map((word) => Number(word.end) || 0), 0);
   const piiControls = (item.piiProposals || []).map((proposal, index) => `<article class="pii-review"><div><strong>${escapeHtml(proposal.type)}</strong><span>${escapeHtml(proposal.value)}</span><small>${escapeHtml(proposal.status)}</small></div>${proposal.status === "proposed" ? `<button class="secondary" data-pii-index="${index}" data-pii-status="confirmed">Confirm</button><button class="secondary" data-pii-index="${index}" data-pii-status="rejected">Reject</button>` : ""}</article>`).join("");
-  const facts = item.triage?.officerFacts || item.triage?.extractedFacts || {};
-  const editableFacts = [["citizenship", "Citizenship"], ["applicantAge", "Applicant age"], ["householdIncome", "Household income"], ["householdSize", "Household size"], ["employment", "Employment"]];
   const readiness = item.reportReadiness || { ready: false, missing: [{ label: "Save the officer review to check report readiness" }] };
-  const factReviewHtml = editableFacts.map(([key, label]) => { const review = item.factReviews?.[key] || {}; const initialValue = review.value ?? facts[key] ?? ""; return `<article class="fact-review" data-fact-review="${key}"><label>${label}<input data-fact-value="${key}" value="${escapeHtml(initialValue)}"></label><label>Review outcome<select data-fact-status="${key}"><option value="" ${!review.status ? "selected" : ""}>Select…</option><option value="verified" ${review.status === "verified" ? "selected" : ""}>Verified</option><option value="unknown" ${review.status === "unknown" ? "selected" : ""}>Unable to verify / not provided</option></select></label><label class="fact-explanation ${review.status === "unknown" ? "" : "hidden"}" data-fact-explanation-wrap="${key}">Explanation<input data-fact-explanation="${key}" value="${escapeHtml(review.explanation || "")}"></label></article>`; }).join("");
   const reportAction = item.reportSummary ? `<a class="primary button" href="/report.html?case=${encodeURIComponent(item.id)}">${item.reportSummary.status === "finalized" ? "View finalized report" : "Continue report draft"}</a>` : `<button id="generate-report" class="primary" ${readiness.ready ? "" : "disabled"}>Generate report</button>`;
+  const callback = callbackPlan(item, evidence, profile, shortlist, flags);
   $("#case-detail").className = "detail";
   $("#case-detail").innerHTML = `
     <div class="detail-head"><div><p class="eyebrow">Case ${item.id.slice(0, 8)}</p><h2>Citizen testimony</h2></div><span class="badge">${escapeHtml(item.status)}</span></div>
@@ -74,7 +73,8 @@ function renderDetail(id) {
       <div class="caller-rundown"><p class="eyebrow">Quick caller rundown</p><p>${escapeHtml(profile.summary)}</p><div class="characteristics">${profile.characteristics?.length ? profile.characteristics.map((fact) => `<button class="characteristic seek-audio evidence-${fact.category}" data-start="${Number(fact.sentenceStart ?? fact.start) || 0}"><span>${escapeHtml(fact.label)}${fact.requiresVerification ? " · verify" : ""}</span><strong>“${escapeHtml(fact.value)}”</strong><small>Phrase at ${Number(fact.start || 0).toFixed(1)}s · replay sentence</small></button>`).join("") : '<p class="muted">No key characteristics were automatically identified.</p>'}</div>${profile.missingCoreDetails?.length ? `<div class="missing-details"><strong>Ask next:</strong> ${escapeHtml(profile.missingCoreDetails.join(", "))}</div>` : ""}</div>
     </section>
     <section><div class="section-head"><h3>Scheme shortlist</h3><span class="engine">${escapeHtml(item.triage?.status || "pending")}</span></div><div class="shortlist">${shortlist.length ? shortlist.map((scheme) => `<article class="scheme-card"><div><strong>${escapeHtml(scheme.name)}</strong><span class="score">${escapeHtml(scheme.softScore)}</span></div><p>${escapeHtml(scheme.reasoning)}</p>${scheme.evidenceRefs?.length ? `<div class="scheme-evidence">${scheme.evidenceRefs.map((fact) => `<button class="characteristic seek-audio evidence-${escapeHtml(fact.category)}" data-start="${Number(fact.sentenceStart ?? fact.start) || 0}"><strong>“${escapeHtml(fact.quote)}”</strong><small>Phrase at ${Number(fact.start || 0).toFixed(1)}s · replay sentence</small></button>`).join("")}</div>` : ""}${scheme.insufficientInformation?.length ? `<div class="flag confidence">Missing: ${escapeHtml(scheme.insufficientInformation.join(", "))}</div>` : ""}${scheme.appealRelevant?.length ? `<div class="flag appeal">Appeal context: ${escapeHtml(scheme.appealRelevant.join("; "))}</div>` : ""}<label class="field-label">Officer reasoning<textarea class="review-textarea short scheme-reasoning" data-scheme-id="${escapeHtml(scheme.schemeId)}">${escapeHtml(scheme.officerReasoning || "")}</textarea></label><button class="secondary save-reasoning" data-scheme-id="${escapeHtml(scheme.schemeId)}">Save reasoning</button></article>`).join("") : '<div class="pending">No automated shortlist. Review the raw audio manually.</div>'}</div></section>
-    <section id="review-section"><h3>Review before report generation</h3><p class="muted">Confirm the source material below. SilverArch will draft the formal report sections automatically, and you can edit the draft before finalizing.</p><div class="officer-profile"><label>Officer name<input id="officer-name" value="${escapeHtml(item.officerProfile?.name || "")}"></label><label>Designation<input id="officer-designation" value="${escapeHtml(item.officerProfile?.designation || "")}"></label><label>Social Service Office<input id="officer-sso" value="${escapeHtml(item.officerProfile?.sso || "")}"></label></div><label class="field-label" for="edit-transcript">Verified transcript</label><textarea id="edit-transcript" class="review-textarea">${escapeHtml(item.transcript.editedText ?? item.transcript.text ?? "")}</textarea><label class="field-label" for="edit-summary">Optional verified caller summary</label><textarea id="edit-summary" class="review-textarea">${escapeHtml(item.callerProfile?.officerSummary ?? item.callerProfile?.summary ?? "")}</textarea><details><summary>Optional fact review for better report drafting</summary><div class="fact-review-list">${factReviewHtml}</div></details><div class="review-confirmations"><label><input id="transcript-reviewed" type="checkbox" ${item.reviewAcknowledgements?.transcriptReviewed ? "checked" : ""}> I reviewed the available audio, transcript and evidence.</label>${item.urgency?.urgent || item.reviewReasons?.length ? `<label><input id="flags-reviewed" type="checkbox" ${item.reviewAcknowledgements?.flagsReviewed ? "checked" : ""}> I considered every review flag. The AI draft may propose formal wording, which I will review before finalization.</label>` : '<input id="flags-reviewed" type="checkbox" class="hidden">'}<label><input id="officer-declaration" type="checkbox" ${item.reviewAcknowledgements?.declaration ? "checked" : ""}> I confirm this report is supporting triage material and not an eligibility determination.</label></div><p id="review-save-status" class="muted">Changes save automatically.</p></section>
+    <section class="callback-script"><div class="section-head"><h3>SSO callback script</h3><span class="engine">${escapeHtml(callback.contact)}</span></div><div class="callback-grid"><article><h4>Call checklist</h4>${callback.checklist.length ? callback.checklist.map((item) => `<label><input type="checkbox"> ${escapeHtml(item)}</label>`).join("") : '<p class="muted">No specific clarification checklist was generated.</p>'}</article><article><h4>Suggested script</h4>${callback.script.map((line) => `<p>${escapeHtml(line)}</p>`).join("")}</article></div><h4>Clarification questions</h4><ol>${callback.questions.map((question) => `<li>${escapeHtml(question)}</li>`).join("")}</ol></section>
+    <section id="review-section"><h3>Review before report generation</h3><p class="muted">Confirm the source material below. SilverArch will draft the formal report sections automatically, and you can edit the draft before finalizing.</p><div class="officer-profile"><label>Officer name<input id="officer-name" value="${escapeHtml(item.officerProfile?.name || "")}"></label><label>Designation<input id="officer-designation" value="${escapeHtml(item.officerProfile?.designation || "")}"></label><label>Social Service Office<input id="officer-sso" value="${escapeHtml(item.officerProfile?.sso || "")}"></label></div><label class="field-label" for="edit-transcript">Verified transcript</label><textarea id="edit-transcript" class="review-textarea">${escapeHtml(item.transcript.editedText ?? item.transcript.text ?? "")}</textarea><label class="field-label" for="edit-summary">Optional verified caller summary</label><textarea id="edit-summary" class="review-textarea">${escapeHtml(item.callerProfile?.officerSummary ?? item.callerProfile?.summary ?? "")}</textarea><div class="review-confirmations"><label><input id="transcript-reviewed" type="checkbox" ${item.reviewAcknowledgements?.transcriptReviewed ? "checked" : ""}> I reviewed the available audio, transcript and evidence.</label>${item.urgency?.urgent || item.reviewReasons?.length ? `<label><input id="flags-reviewed" type="checkbox" ${item.reviewAcknowledgements?.flagsReviewed ? "checked" : ""}> I considered every review flag. The AI draft may propose formal wording, which I will review before finalization.</label>` : '<input id="flags-reviewed" type="checkbox" class="hidden">'}<label><input id="officer-declaration" type="checkbox" ${item.reviewAcknowledgements?.declaration ? "checked" : ""}> I confirm this report is supporting triage material and not an eligibility determination.</label></div><p id="review-save-status" class="muted">Changes save automatically.</p></section>
     <section><h3>PII redaction proposals</h3><div class="pii-controls">${piiControls || '<p class="muted">No PII proposals.</p>'}</div></section>
     <section><h3>Audit trail</h3><div class="audit-list">${(item.auditEvents || []).map((event) => `<p><strong>${escapeHtml(event.action)}</strong> · ${new Date(event.at).toLocaleString("en-SG")}<br><span>${escapeHtml(event.detail || "")}</span></p>`).join("") || '<p class="muted">No audit events recorded.</p>'}</div></section>
     <section id="report-readiness" class="report-readiness ${readiness.ready ? "ready" : "blocked"}"><h3>${readiness.ready ? "Ready to generate" : "Report not ready"}</h3>${readiness.ready ? '<p>All required review steps are complete. Generate an editable supporting report draft.</p>' : `<p>Complete the following items:</p><ul>${readiness.missing.map((entry) => `<li>${escapeHtml(entry.label)}</li>`).join("")}</ul>`}</section><div class="actions"><button class="secondary" data-action="needs-review">Keep in review</button><button class="secondary" data-action="escalated">Escalate</button>${reportAction}</div>`;
@@ -82,7 +82,6 @@ function renderDetail(id) {
   document.querySelectorAll("[data-action]").forEach((button) => button.addEventListener("click", () => updateStatus(item.id, button.dataset.action)));
   document.querySelectorAll("[data-pii-index]").forEach((button) => button.addEventListener("click", () => updateCase(item.id, { piiDecision: { index: Number(button.dataset.piiIndex), status: button.dataset.piiStatus } })));
   document.querySelectorAll(".save-reasoning").forEach((button) => button.addEventListener("click", () => updateCase(item.id, { reasoning: { schemeId: button.dataset.schemeId, text: document.querySelector(`.scheme-reasoning[data-scheme-id="${CSS.escape(button.dataset.schemeId)}"]`).value } })));
-  document.querySelectorAll("[data-fact-status]").forEach((select) => select.addEventListener("change", () => document.querySelector(`[data-fact-explanation-wrap="${CSS.escape(select.dataset.factStatus)}"]`).classList.toggle("hidden", select.value !== "unknown")));
   setupAutoSave(item.id);
   $("#generate-report")?.addEventListener("click", () => generateReport(item.id));
   if ($("#case-audio")) setupAudioPlayer(duration);
@@ -94,6 +93,136 @@ function evidenceDisplayTranscript(item) {
     return { title: "English translation — highlighted evidence", engine: item.translation.provider || "translation", words, text: item.translation.english?.text || "", highlightEvidence: true, isTranslated: true };
   }
   return { title: "Original transcript", engine: `ASR: ${item.transcript.asrEngine || "failed"}${item.transcript.languageCode ? ` · ${item.transcript.languageCode}` : ""}`, words: item.transcript.words || item.transcript.segments || [], text: item.transcript.text || "", highlightEvidence: true, isTranslated: false };
+}
+
+function callbackPlan(item, evidence = [], profile = {}, shortlist = [], flags = []) {
+  const contact = item.contact?.phone || "No callback number";
+  const checklist = uniqueItems([
+    item.contact?.phone ? `Call ${item.contact.phone} and confirm it is a safe number to use.` : "Obtain a reachable phone number before follow-up.",
+    "Confirm the caller's name and preferred language for the callback.",
+    ...(flags.length ? ["Review flags before asking routine questions."] : []),
+    ...(item.urgency?.urgent ? [`If risk is still immediate, redirect to ${item.urgency.resource || "emergency support"} before continuing triage.`] : []),
+    ...(item.piiProposals || []).filter((proposal) => proposal.status === "proposed").map((proposal) => `Verify whether the ${proposal.type} was intentionally provided, then confirm or reject the redaction proposal.`),
+    ...(profile.missingCoreDetails || []).map((detail) => `Clarify ${plainDetail(detail)}.`),
+    ...shortlist.flatMap((scheme) => (scheme.insufficientInformation || []).map((detail) => `Clarify for ${scheme.name}: ${detail}.`)),
+    ...evidence.filter((item) => item.requiresVerification).map((item) => `Verify the statement: "${item.text}".`)
+  ]);
+  const questions = uniqueItems([
+    "Can I confirm your full name and whether this is a safe time and number to speak?",
+    `Would you prefer to continue in ${languageLabel(item.intakeLanguage)} or another language?`,
+    ...(profile.missingCoreDetails || []).map((detail) => questionForDetail(detail)),
+    ...shortlist.flatMap((scheme) => (scheme.insufficientInformation || []).map((detail) => `For ${scheme.name}, can you clarify ${detail.replace(/\s+not stated$/i, "")}?`)),
+    ...evidence.filter((item) => item.requiresVerification).map((item) => `You mentioned "${item.text}". Can I confirm that detail is accurate?`),
+    ...(item.urgency?.urgent ? ["Are you safe right now, and do you need emergency assistance before we continue?"] : []),
+    "What has changed recently, and what help do you need most urgently now?",
+    "Are there documents or contact details you can provide to support the review?"
+  ]);
+  const script = [
+    `Hello, I am calling from the Social Service Office regarding the ComCare voice message submitted through SilverArch.`,
+    `I need to verify a few details so the officer review and any supporting report are accurate. This call does not determine eligibility.`,
+    `I will ask only for information needed to clarify your situation, and you may tell me if any question is uncomfortable or unsafe to answer.`,
+    `At the end, I will summarize what I understood and explain that an officer will review the information.`
+  ];
+  return { contact, checklist, questions, script };
+}
+
+function questionForDetail(detail) {
+  const map = {
+    citizenship: "Can you confirm whether you are a Singapore Citizen, Permanent Resident, or another status?",
+    age: "Can you confirm your age?",
+    income: "Can you describe your current household income, including work income, CPF payouts, allowances, or other support?",
+    family: "Who lives with you, and are there children, elderly persons, or dependants you support?"
+  };
+  return map[detail] || `Can you clarify ${plainDetail(detail)}?`;
+}
+
+function plainDetail(detail = "") {
+  return String(detail).replace(/([A-Z])/g, " $1").replace(/[-_]+/g, " ").toLowerCase();
+}
+
+function uniqueItems(items) {
+  const seen = new Set();
+  return items.map((item) => String(item || "").trim()).filter((item) => {
+    const key = item.toLowerCase();
+    if (!item || seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+function displayEvidence(item) {
+  const entries = [
+    ...(item.evidence || []),
+    ...(item.callerProfile?.characteristics || []).map(({ evidenceId, category, label, value, start, end, sentenceStart, requiresVerification, startWord, endWord }) => ({ id: evidenceId, category, label, text: value, start, end, sentenceStart, requiresVerification, startWord, endWord })),
+    ...(item.triage?.shortlist || []).flatMap((scheme) => (scheme.evidenceRefs || []).map(({ id, category, quote, start, end, sentenceStart, startWord, endWord }) => ({ id, category, label: scheme.name || "Scheme evidence", text: quote, start, end, sentenceStart, startWord, endWord })))
+  ];
+  const seen = new Set();
+  return entries.filter((entry) => {
+    const key = entry.id || `${entry.category}:${normalEvidenceText(entry.text)}:${Number(entry.start ?? -1).toFixed(2)}`;
+    if (!entry.text || seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+function buildEvidenceWordMarkers(evidence, words, enabled) {
+  const markers = new Map();
+  if (!enabled || !words.length) return markers;
+  evidence.forEach((fact) => {
+    const range = evidenceWordRange(fact, words);
+    if (!range) return;
+    for (let index = range.startWord; index <= range.endWord; index += 1) {
+      if (!markers.has(index)) markers.set(index, fact);
+    }
+  });
+  return markers;
+}
+
+function evidenceWordRange(fact, words) {
+  const indexedRange = numericWordRange(fact, words);
+  if (indexedRange) return indexedRange;
+  const textRange = textWordRange(fact.text, words);
+  if (textRange) return textRange;
+  return timedWordRange(fact, words);
+}
+
+function numericWordRange(fact, words) {
+  const startWord = Number(fact.startWord);
+  const endWord = Number(fact.endWord);
+  if (!Number.isInteger(startWord) || !Number.isInteger(endWord)) return null;
+  if (startWord < 0 || endWord < startWord || endWord >= words.length) return null;
+  return { startWord, endWord };
+}
+
+function textWordRange(text, words) {
+  const phrase = normalEvidenceTokens(text);
+  if (!phrase.length) return null;
+  const haystack = words.map((word) => normalEvidenceText(word.text));
+  for (let index = 0; index <= haystack.length - phrase.length; index += 1) {
+    if (phrase.every((token, offset) => haystack[index + offset] === token)) return { startWord: index, endWord: index + phrase.length - 1 };
+  }
+  return null;
+}
+
+function timedWordRange(fact, words) {
+  const start = Number(fact.start);
+  const end = Number(fact.end);
+  if (!Number.isFinite(start)) return null;
+  if (!Number.isFinite(end) || end <= start) {
+    const nearest = words.findIndex((word) => Number(word.start) >= start || Number(word.end) >= start);
+    return nearest >= 0 ? { startWord: nearest, endWord: nearest } : null;
+  }
+  const selected = words.map((word, index) => ({ word, index })).filter(({ word }) => Number(word.end ?? word.start) > start && Number(word.start ?? word.end) < end);
+  if (!selected.length) return null;
+  return { startWord: selected[0].index, endWord: selected[selected.length - 1].index };
+}
+
+function normalEvidenceTokens(text = "") {
+  return String(text).split(/\s+/).map(normalEvidenceText).filter(Boolean);
+}
+
+function normalEvidenceText(text = "") {
+  return String(text).toLowerCase().replace(/[^\p{Letter}\p{Number}]+/gu, "");
 }
 
 function translationWords(translation = {}) {
@@ -108,8 +237,7 @@ function translationWords(translation = {}) {
 }
 
 async function saveOfficerReview(id, { silent = false } = {}) {
-  const factReviews = Object.fromEntries([...document.querySelectorAll("[data-fact-review]")].map((row) => { const key = row.dataset.factReview; return [key, { status: row.querySelector(`[data-fact-status="${CSS.escape(key)}"]`).value, value: row.querySelector(`[data-fact-value="${CSS.escape(key)}"]`).value, explanation: row.querySelector(`[data-fact-explanation="${CSS.escape(key)}"]`).value }]; }));
-  return updateCase(id, { transcriptText: $("#edit-transcript").value, summary: $("#edit-summary").value, officerProfile: { name: $("#officer-name").value, designation: $("#officer-designation").value, sso: $("#officer-sso").value }, factReviews, reviewAcknowledgements: { transcriptReviewed: $("#transcript-reviewed").checked, flagsReviewed: $("#flags-reviewed").checked, declaration: $("#officer-declaration").checked } }, { rerender: !silent, silent });
+  return updateCase(id, { transcriptText: $("#edit-transcript").value, summary: $("#edit-summary").value, officerProfile: { name: $("#officer-name").value, designation: $("#officer-designation").value, sso: $("#officer-sso").value }, reviewAcknowledgements: { transcriptReviewed: $("#transcript-reviewed").checked, flagsReviewed: $("#flags-reviewed").checked, declaration: $("#officer-declaration").checked } }, { rerender: !silent, silent });
 }
 
 async function generateReport(id) {

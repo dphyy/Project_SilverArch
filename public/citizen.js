@@ -98,7 +98,7 @@ async function loadGate(demoHour = new URLSearchParams(location.search).get("dem
   show(gate.mode === "open" ? "#open-panel" : "#language-panel");
 }
 
-async function renderCopy() {
+function renderCopy() {
   const t = copy();
   stopReadAloud();
   ensureEarButtons();
@@ -121,10 +121,10 @@ function escapeHtml(value = "") {
   return String(value).replace(/[&<>'"]/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", '"': "&quot;" }[char]));
 }
 
-document.querySelectorAll("[data-language]").forEach((button) => button.addEventListener("click", async () => {
+document.querySelectorAll("[data-language]").forEach((button) => button.addEventListener("click", () => {
   stopReadAloud();
   language = button.dataset.language;
-  await renderCopy();
+  renderCopy();
   show("#consent-panel");
 }));
 
@@ -266,7 +266,11 @@ function toggleReadAloud(button) {
   const text = chunks.join(separator);
   if (!text.trim()) return;
   if (language === "zh") {
-    speakChineseChunkQueue(button, items);
+    speakChunkQueue(button, readableChunks(items, SPEECH_LANG.zh));
+    return;
+  }
+  if (currentPanel === "#language-panel") {
+    speakChunkQueue(button, readableChunks(items));
     return;
   }
   const utterance = new SpeechSynthesisUtterance(speechText(text));
@@ -291,18 +295,17 @@ function toggleReadAloud(button) {
   startFallbackHighlight(tokens);
 }
 
-function speakChineseChunkQueue(button, items) {
-  const chunks = chineseReadableChunks(items);
+function speakChunkQueue(button, chunks) {
   if (!chunks.length) return;
   window.speechSynthesis.cancel();
   button.classList.add("active");
   speechState = { utterance: null, tokens: chunks, activeIndex: -1, fallbackTimer: null, boundarySeen: false, lastBoundaryAt: Date.now(), queue: { index: 0, partIndex: 0, stopped: false } };
-  speakNextChineseChunk(button);
+  speakNextQueuedChunk(button);
 }
 
-function chineseReadableChunks(items) {
+function readableChunks(items, defaultLang = SPEECH_LANG[language] || SPEECH_LANG.en) {
   return items.flatMap((item) => sentenceParts(item.dataset.readText)
-    .map((text) => ({ text, element: item, parts: mixedLanguageParts(text) }))
+    .map((text) => ({ text, element: item, parts: mixedLanguageParts(text, item.dataset.language ? SPEECH_LANG[item.dataset.language] || defaultLang : defaultLang) }))
     .filter((chunk) => chunk.text.trim()));
 }
 
@@ -313,16 +316,17 @@ function sentenceParts(text = "") {
   return parts.map((part) => part.trim()).filter(Boolean);
 }
 
-function mixedLanguageParts(text = "") {
+function mixedLanguageParts(text = "", defaultLang = SPEECH_LANG[language] || SPEECH_LANG.en) {
   const parts = [];
   const pattern = /[A-Za-z][A-Za-z0-9-]*/g;
   let cursor = 0;
+  const useEnglishForLatin = ["zh", "ta"].some((prefix) => defaultLang.toLowerCase().startsWith(prefix));
   for (const match of text.matchAll(pattern)) {
-    if (match.index > cursor) parts.push({ text: text.slice(cursor, match.index).trim(), lang: SPEECH_LANG.zh });
-    parts.push({ text: match[0], lang: SPEECH_LANG.en });
+    if (match.index > cursor) parts.push({ text: text.slice(cursor, match.index).trim(), lang: defaultLang });
+    parts.push({ text: match[0], lang: useEnglishForLatin ? SPEECH_LANG.en : defaultLang });
     cursor = match.index + match[0].length;
   }
-  if (cursor < text.length) parts.push({ text: text.slice(cursor).trim(), lang: SPEECH_LANG.zh });
+  if (cursor < text.length) parts.push({ text: text.slice(cursor).trim(), lang: defaultLang });
   return parts.filter((part) => part.text);
 }
 
@@ -330,7 +334,7 @@ function speechText(text = "") {
   return String(text).replace(/\b([A-Z]{2,})\b/g, (_match, acronym) => acronym.split("").join(" "));
 }
 
-function speakNextChineseChunk(button) {
+function speakNextQueuedChunk(button) {
   const queue = speechState.queue;
   if (!queue || queue.stopped) return;
   const chunk = speechState.tokens[queue.index];
@@ -343,7 +347,7 @@ function speakNextChineseChunk(button) {
   if (!part) {
     queue.index += 1;
     queue.partIndex = 0;
-    window.setTimeout(() => speakNextChineseChunk(button), 120);
+    window.setTimeout(() => speakNextQueuedChunk(button), 120);
     return;
   }
   const text = part.text;
@@ -359,12 +363,12 @@ function speakNextChineseChunk(button) {
   utterance.onend = () => {
     if (!speechState.queue || speechState.queue.stopped) return;
     speechState.queue.partIndex += 1;
-    window.setTimeout(() => speakNextChineseChunk(button), lang.startsWith("en") ? 70 : 40);
+    window.setTimeout(() => speakNextQueuedChunk(button), lang.startsWith("en") ? 70 : 40);
   };
   utterance.onerror = () => {
     if (!speechState.queue || speechState.queue.stopped) return;
     speechState.queue.partIndex += 1;
-    window.setTimeout(() => speakNextChineseChunk(button), 60);
+    window.setTimeout(() => speakNextQueuedChunk(button), 60);
   };
   window.speechSynthesis.speak(utterance);
 }

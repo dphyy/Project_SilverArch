@@ -112,6 +112,40 @@ test("MC is surfaced as work interruption and caller rundown removes overlapping
   assert.equal(extractTypedFacts(text).hardship.medical, true);
 });
 
+test("scheme-relevant evidence includes cited role, family age and clinic bill phrases", () => {
+  const text = "I was a Grab driver but injured my back. My household income is basically zero. I have two children aged nine and ten. I need help with a clinic bill.";
+  const words = text.split(" ").map((word, index) => ({ text: word, start: index * 0.5, end: index * 0.5 + 0.4 }));
+  const evidence = extractEvidence({ text, words });
+  assert.ok(evidence.some((item) => item.category === "employment" && /driver/i.test(item.text)));
+  assert.ok(evidence.some((item) => item.category === "income" && /household income is basically zero/i.test(item.text)));
+  assert.ok(evidence.some((item) => item.category === "family" && /two children aged nine and ten/i.test(item.text)));
+  assert.ok(evidence.some((item) => item.category === "medical" && /clinic bill/i.test(item.text)));
+});
+
+test("essential utility fee evidence is extracted and kept in scheme citations", () => {
+  const text = "My income is basically zero. The fees are insufficient to cover electricity usage. Electricity bills are expensive. I have two children. I am Singaporean.";
+  const words = text.split(" ").map((word, index) => ({ text: word, start: index * 0.5, end: index * 0.5 + 0.4 }));
+  const evidence = extractEvidence({ text, words });
+  assert.ok(evidence.some((item) => item.category === "income" && /fees are insufficient to cover electricity usage/i.test(item.text)));
+  assert.ok(evidence.some((item) => item.category === "income" && /Electricity bills are expensive/i.test(item.text)));
+  const schemes = [{ scheme_id: "smta", name: "SMTA", hard_ceilings: [], flexible_criteria: [{ field: "income", benchmark: "800" }] }];
+  const triage = triageTranscript(text, schemes, evidence);
+  assert.ok(triage.shortlist[0].appealRelevant.includes("Utility bills or essential fees mentioned"));
+  assert.ok(triage.shortlist[0].evidenceRefs.some((item) => /fees are insufficient/i.test(item.quote)));
+  assert.ok(triage.shortlist[0].evidenceRefs.some((item) => /Electricity bills are expensive/i.test(item.quote)));
+});
+
+test("translated testimony highlights citizenship, financial, health and care evidence", () => {
+  const text = "I am from Singapore and I am 60 years old this year. I'm not working tonight, I have no work, I can't earn money. I suffer from bone pain all over my body, I'm in poor health, and I love seeing doctors, but I don't have enough money. I have children and grandchildren to take care of, and I also have elderly people to love and care for.";
+  const words = text.split(" ").map((word, index) => ({ text: word, start: index * 0.4, end: index * 0.4 + 0.3 }));
+  const evidence = extractEvidence({ text, words });
+  assert.ok(evidence.some((item) => item.category === "citizenship" && /from Singapore/i.test(item.text)));
+  assert.ok(evidence.some((item) => item.category === "employment" && /not working|no work/i.test(item.text)));
+  assert.ok(evidence.some((item) => item.category === "income" && /can't earn money|don't have enough money/i.test(item.text)));
+  assert.ok(evidence.some((item) => item.category === "medical" && /bone pain|poor health|seeing doctors/i.test(item.text)));
+  assert.ok(evidence.some((item) => item.category === "caregiving" && /take care of|care for/i.test(item.text)));
+});
+
 test("hard ceilings remain unknown until stated and only violations exclude", () => {
   const scheme = [{ scheme_id: "chas", name: "CHAS", hard_ceilings: [], flexible_criteria: [] }];
   const unknown = triageTranscript("I need help with a clinic bill", scheme);

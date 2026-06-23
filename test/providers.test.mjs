@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { MeralionProvider } from "../src/services/asr.mjs";
+import { extractEvidenceWithAI, OpenAIEvidenceExtractor } from "../src/services/evidence-extractor.mjs";
 import { translateWithFallback } from "../src/services/translation.mjs";
 
 test("hosted MERaLiON request is primary and normalizes timestamps", async () => {
@@ -31,4 +32,26 @@ test("translation falls back to Google text translation with attribution and tim
   assert.equal(result.provider, "google-translate");
   assert.equal(result.fallbackReason, "MERaLiON timeout");
   assert.equal(result.english.sentences[0].sourceStart, 4);
+});
+
+test("OpenAI evidence extraction augments deterministic highlights with exact quotes", async () => {
+  const text = "I am from Singapore. I suffer from bone pain. I cannot earn money.";
+  const words = text.split(" ").map((word, index) => ({ text: word, start: index * 0.5, end: index * 0.5 + 0.4 }));
+  const ai = new OpenAIEvidenceExtractor({ apiKey: "test-key", model: "evidence-model", fetchImpl: async (url, options) => {
+    assert.equal(url, "https://api.openai.com/v1/responses");
+    assert.equal(options.headers.authorization, "Bearer test-key");
+    const body = JSON.parse(options.body);
+    assert.equal(body.model, "evidence-model");
+    assert.match(body.input, /I am from Singapore/);
+    return new Response(JSON.stringify({ output_text: JSON.stringify([
+      { category: "citizenship", quote: "from Singapore" },
+      { category: "medical", quote: "suffer from bone pain" },
+      { category: "income", quote: "cannot earn money" }
+    ]) }), { status: 200, headers: { "content-type": "application/json" } });
+  } });
+  const result = await extractEvidenceWithAI({ text, words }, { ai, baseExtractor: () => [] });
+  assert.equal(result.provider, "openai");
+  assert.ok(result.evidence.some((item) => item.category === "citizenship" && item.source === "openai"));
+  assert.ok(result.evidence.some((item) => item.category === "medical"));
+  assert.ok(result.evidence.some((item) => item.category === "income"));
 });

@@ -66,17 +66,31 @@ export function buildReportDraft(caseItem, version = 1, now = new Date().toISOSt
 
 export function reportEvidence(caseItem = {}) {
   const items = [
-    ...(caseItem.evidence || []).map(({ id, category, label, text, start, sentenceStart, requiresVerification }) => ({ id, category, label, text, start, sentenceStart, requiresVerification })),
-    ...(caseItem.callerProfile?.characteristics || []).map(({ evidenceId, category, label, value, start, sentenceStart, requiresVerification }) => ({ id: evidenceId, category, label, text: value, start, sentenceStart, requiresVerification })),
-    ...(caseItem.triage?.shortlist || []).flatMap((scheme) => (scheme.evidenceRefs || []).map(({ id, category, quote, start, sentenceStart }) => ({ id, category, label: scheme.name || "Scheme evidence", text: quote, start, sentenceStart, requiresVerification: false })))
+    ...(caseItem.evidence || []).map(({ id, category, label, text, start, end, sentenceStart, requiresVerification, source, startWord, endWord }) => ({ id, category, label, text, start, end, sentenceStart, requiresVerification, source, startWord, endWord })),
+    ...(caseItem.callerProfile?.characteristics || []).map(({ evidenceId, category, label, value, start, end, sentenceStart, requiresVerification, source, startWord, endWord }) => ({ id: evidenceId, category, label, text: value, start, end, sentenceStart, requiresVerification, source, startWord, endWord })),
+    ...(caseItem.triage?.shortlist || []).flatMap((scheme) => (scheme.evidenceRefs || []).map(({ id, category, quote, start, end, sentenceStart, source, startWord, endWord }) => ({ id, category, label: scheme.name || "Scheme evidence", text: quote, start, end, sentenceStart, requiresVerification: false, source, startWord, endWord })))
   ].filter((item) => filled(item.text));
-  const seen = new Set();
-  return items.filter((item) => {
-    const key = item.id || `${item.category}:${String(item.text).toLowerCase().replace(/\s+/g, " ").trim()}:${Number(item.start || 0).toFixed(2)}`;
-    if (seen.has(key)) return false;
-    seen.add(key);
-    return true;
-  }).sort((a, b) => Number(a.start || 0) - Number(b.start || 0) || String(a.label).localeCompare(String(b.label)));
+  const seen = new Map();
+  for (const item of items) {
+    const key = evidenceKey(item);
+    const existing = seen.get(key);
+    if (existing) {
+      if (!existing.id && item.id) existing.id = item.id;
+      if (!existing.end && item.end) existing.end = item.end;
+      if (!existing.source && item.source) existing.source = item.source;
+      if (!Number.isInteger(existing.startWord) && Number.isInteger(item.startWord)) existing.startWord = item.startWord;
+      if (!Number.isInteger(existing.endWord) && Number.isInteger(item.endWord)) existing.endWord = item.endWord;
+      continue;
+    }
+    seen.set(key, { ...item });
+  }
+  return [...seen.values()].sort((a, b) => Number(a.start || 0) - Number(b.start || 0) || String(a.label).localeCompare(String(b.label)));
+}
+
+function evidenceKey(item) {
+  const text = String(item.text).toLowerCase().replace(/\s+/g, " ").trim();
+  if (Number.isInteger(item.startWord) && Number.isInteger(item.endWord)) return `${item.category}:${item.startWord}-${item.endWord}:${text}`;
+  return `${item.category}:${text}:${Number(item.start || 0).toFixed(2)}:${Number(item.end || 0).toFixed(2)}`;
 }
 
 export function buildReportMaterial(caseItem = {}) {
@@ -93,7 +107,7 @@ export function buildReportMaterial(caseItem = {}) {
     },
     englishTranslation: caseItem.translation?.status === "ready" ? caseItem.translation.english?.text || "" : "",
     callerProfile: caseItem.callerProfile || {},
-    evidence: (caseItem.evidence || []).map(({ label, text, start, sentenceStart, category, requiresVerification }) => ({ label, text, start, sentenceStart, category, requiresVerification })),
+    evidence: reportEvidence(caseItem).map(({ label, text, start, end, sentenceStart, category, requiresVerification, source, startWord, endWord }) => ({ label, text, start, end, sentenceStart, category, requiresVerification, source, startWord, endWord })),
     facts: caseItem.factReviews || caseItem.triage?.officerFacts || caseItem.triage?.extractedFacts || {},
     schemes: (caseItem.triage?.shortlist || []).map(({ schemeId, name, reasoning, softScore, appealRelevant, insufficientInformation, evidenceRefs }) => ({ schemeId, name, reasoning, softScore, appealRelevant, insufficientInformation, evidenceRefs })),
     urgency: caseItem.urgency || {},

@@ -69,12 +69,35 @@ test("report evidence merges full evidence, caller characteristics and scheme re
   item.callerProfile.characteristics = [{ evidenceId: "age-0", category: "age", label: "Age", value: "thirty-five years old", start: 4.2, sentenceStart: 2.1 }];
   item.triage.shortlist[0].evidenceRefs = [
     { id: "income-1", category: "income", quote: "no income", start: 7.5, sentenceStart: 6 },
-    { id: "age-0", category: "age", quote: "thirty-five years old", start: 4.2, sentenceStart: 2.1 }
+    { id: "age-0", category: "age", quote: "thirty-five years old", start: 4.2, sentenceStart: 2.1 },
+    { id: "scheme-income-duplicate", category: "income", quote: "no income", start: 7.5, sentenceStart: 6 }
   ];
   const evidence = reportEvidence(item);
   assert.ok(evidence.some((entry) => entry.text === "thirty-five years old"));
   assert.ok(evidence.some((entry) => entry.text === "no income"));
   assert.equal(evidence.filter((entry) => entry.id === "age-0").length, 1);
+  assert.equal(evidence.filter((entry) => entry.text === "no income").length, 1);
+});
+
+test("generated report evidence includes every highlighted component", () => {
+  const item = completeCase();
+  item.evidence = [
+    { id: "citizenship-0-3", category: "citizenship", label: "Citizenship / residency", text: "I am from Singapore", start: 0, end: 1.5, sentenceStart: 0, startWord: 0, endWord: 3 },
+    { id: "age-5-9", category: "age", label: "Age", text: "I am 60 years old", start: 2, end: 3.5, sentenceStart: 0, startWord: 5, endWord: 9 },
+    { id: "employment-13-14", category: "employment", label: "Employment", text: "not working", start: 5.2, end: 5.9, sentenceStart: 5.2, startWord: 13, endWord: 14 },
+    { id: "income-21-23", category: "income", label: "Income and finances", text: "can't earn money", start: 8.4, end: 9.5, sentenceStart: 5.2, startWord: 21, endWord: 23 },
+    { id: "medical-26-30", category: "medical", label: "Health and medical needs", text: "suffer from bone pain", start: 10.4, end: 12.3, sentenceStart: 10.4, startWord: 26, endWord: 30 },
+    { id: "caregiving-55-58", category: "caregiving", label: "Caregiving", text: "take care of", start: 22, end: 23.5, sentenceStart: 20, startWord: 55, endWord: 58 }
+  ];
+  item.callerProfile.characteristics = [];
+  item.triage.shortlist[0].evidenceRefs = [
+    { id: "income-21-23", category: "income", quote: "can't earn money", start: 8.4, end: 9.5, sentenceStart: 5.2, startWord: 21, endWord: 23 }
+  ];
+  const report = buildReportDraft(item);
+  const categories = new Set(report.evidence.map((entry) => entry.category));
+  assert.deepEqual([...categories].sort(), ["age", "caregiving", "citizenship", "employment", "income", "medical"]);
+  assert.ok(report.evidence.every((entry) => Number.isInteger(entry.startWord) && Number.isInteger(entry.endWord)));
+  assert.equal(report.evidence.filter((entry) => entry.text === "can't earn money").length, 1);
 });
 
 test("report drafting uses MERaLiON first and OpenAI as fallback", async () => {

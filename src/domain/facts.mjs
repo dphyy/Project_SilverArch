@@ -28,6 +28,7 @@ export function extractTypedFacts(text = "") {
     hardship: {
       jobLoss: /\b(?:lost my job|retrenched|no income|income.*zero)\b/i.test(text),
       medical: /\b(?:medical bills?|hospital bills?|disability|illness|injured|on mc)\b/i.test(text),
+      utilities: /\b(?:electricity|utilities?|utility|power|water|gas|sp|s&cc|conservancy)\s+(?:bills?|fees?|charges?|usage|expenses?)|(?:fees?|income|salary|allowance|assistance|payout|cash|money)[^.!?]{0,60}(?:insufficient|not enough|too little|cannot cover|can't cover|not sufficient)[^.!?]{0,60}(?:electricity|utilities?|power|water|bills?|expenses?|usage|fees?)\b/i.test(text),
       caregiving: /\b(?:caregiver|caregiving|look after|taking care)\b/i.test(text),
       estrangement: /\b(?:estranged|no contact|family cannot|family can't)\b/i.test(text),
       housing: /\b(?:rent|rental|evict|homeless|no place to stay)\b/i.test(text)
