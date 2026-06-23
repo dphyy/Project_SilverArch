@@ -1,6 +1,8 @@
 const $ = (selector) => document.querySelector(selector);
 const panels = ["#open-panel", "#language-panel", "#consent-panel", "#record-panel", "#contact-panel", "#done-panel"];
-const PROMPTS = ["greeting", "consent", "recording-instructions"];
+const SPEECH_LANG = { en: "en-SG", zh: "zh-CN", ms: "ms-MY", ta: "ta-IN" };
+const SPEECH_RATE = { en: 0.78, zh: 0.56, ms: 0.72, ta: 0.6 };
+const FALLBACK_MS_PER_TOKEN = { en: 430, zh: 660, ms: 460, ta: 520 };
 let gate;
 let recorder;
 let chunks = [];
@@ -10,14 +12,15 @@ let startedAt;
 let recordingDurationMs = 0;
 let previewUrl;
 let language = "en";
-let promptAudio;
+let currentPanel = "#language-panel";
+let speechState = { utterance: null, tokens: [], activeIndex: -1, fallbackTimer: null, boundarySeen: false, lastBoundaryAt: 0, queue: null };
 
 const COPY = {
   en: {
     statusChecked: "Singapore time checked", demoTime: "Demo time active", titleOpen: "A live officer is available", titleAnswered: "SilverArch has answered",
     openLead: "The ComCare hotline is open daily from 7am to midnight.", closedLead: "The live hotline is closed. You can leave a voice account for next-day review.",
     openMessage: "A live ComCare officer is available now. SilverArch does not record during hotline hours.", callHotline: "Call 1800-222-0000",
-    chooseKicker: "Choose language", chooseTitle: "How would you like to continue?", playGreeting: "Play greeting", playConsent: "Play consent", playInstructions: "Play instructions",
+    chooseKicker: "Choose language", chooseTitle: "How would you like to continue?",
     consentNotice: "<strong>No live officer is on this channel.</strong> Your recording will be reviewed on the next working day. Tone and pacing may help an officer prioritise review.",
     consentLabel: "I agree to have my voice recorded and transcribed for ComCare intake.", continue: "Continue",
     recordHeading: "Please introduce yourself first, then tell us what happened and what help you need.",
@@ -31,15 +34,15 @@ const COPY = {
   },
   zh: {
     statusChecked: "已检查新加坡时间", demoTime: "演示时间已启用", titleOpen: "现在有热线人员接听", titleAnswered: "SilverArch 已接听",
-    openLead: "ComCare 热线每日早上 7 点至午夜开放。", closedLead: "热线目前已关闭。您可以留下语音说明，工作人员会在下一个工作日查看。",
-    openMessage: "现在有 ComCare 热线人员接听。热线开放时，SilverArch 不会录音。", callHotline: "拨打 1800-222-0000",
-    chooseKicker: "选择语言", chooseTitle: "您想用哪种语言继续？", playGreeting: "播放问候", playConsent: "播放同意说明", playInstructions: "播放说明",
+    openLead: "社区关怀热线每日早上 7 点至午夜开放。", closedLead: "热线目前已关闭。您可以留下语音说明，工作人员会在下一个工作日查看。",
+    openMessage: "现在有社区关怀热线人员接听。热线开放时，SilverArch 不会录音。", callHotline: "拨打 1800-222-0000",
+    chooseKicker: "选择语言", chooseTitle: "您想用哪种语言继续？",
     consentNotice: "<strong>此频道没有即时人员接听。</strong> 您的录音会在下一个工作日由工作人员查看。语气和语速可能有助于工作人员优先处理。",
-    consentLabel: "我同意录下我的声音并转成文字，用于 ComCare 初步了解情况。", continue: "继续",
+    consentLabel: "我同意录下我的声音并转成文字，用于社区关怀初步了解情况。", continue: "继续",
     recordHeading: "请先介绍自己，然后说明发生了什么事，以及您需要什么帮助。",
     promptIntro: "为了帮助工作人员了解您的情况，请尽量说明：",
     promptItems: ["您的姓名、年龄、公民或居留身份", "您的工作情况和每月家庭收入", "与您同住的人，包括孩子人数和年龄", "住房、医疗、照护、学校或其他主要开支", "最近发生了什么变化，以及现在需要什么帮助"],
-    promptSmall: "您不需要说出 NRIC。请自然说明，只分享您愿意提供的资料。",
+    promptSmall: "您不需要说出身份证号码。请自然说明，只分享您愿意提供的资料。",
     tapStart: "点击圆圈开始录音。", recording: "录音中……完成后请再点一次。", review: "请回听、重新录音，或继续填写联系方式。", mic: "需要麦克风权限才能录音。", recordAgain: "重新录音",
     contactKicker: "联系方式", contactTitle: "工作人员可以怎样联系您？", contactNotice: "收集您的电话号码，是为了让社会服务人员在查看个案后联系您。", phoneLabel: "新加坡电话号码", phoneHelp: "请输入 8 位号码，可包含或不包含 +65。", submit: "提交审核", back: "返回录音", invalidPhone: "请输入有效的 8 位新加坡电话号码。", sending: "正在安全提交……", sendFail: "录音无法提交。",
     doneTitle: "已收到录音", doneMessage: "工作人员可在下一个工作日查看。如果您现在有安全风险，请拨打 <strong>999</strong> 或 <strong>1-767</strong>。", urgentTitle: "请立即寻求帮助", urgentMessage: (resource) => `我们已收到录音，但内容可能涉及即时安全风险。请现在联系 <strong>${resource}</strong>，不要等到下一个工作日。`,
@@ -49,7 +52,7 @@ const COPY = {
     statusChecked: "Masa Singapura disemak", demoTime: "Masa demo aktif", titleOpen: "Pegawai talian sedang tersedia", titleAnswered: "SilverArch telah menjawab",
     openLead: "Talian ComCare dibuka setiap hari dari 7 pagi hingga tengah malam.", closedLead: "Talian langsung telah ditutup. Anda boleh tinggalkan rakaman suara untuk semakan hari bekerja seterusnya.",
     openMessage: "Pegawai ComCare tersedia sekarang. SilverArch tidak merakam semasa waktu talian dibuka.", callHotline: "Hubungi 1800-222-0000",
-    chooseKicker: "Pilih bahasa", chooseTitle: "Bagaimana anda ingin teruskan?", playGreeting: "Mainkan ucapan", playConsent: "Mainkan persetujuan", playInstructions: "Mainkan arahan",
+    chooseKicker: "Pilih bahasa", chooseTitle: "Bagaimana anda ingin teruskan?",
     consentNotice: "<strong>Tiada pegawai langsung di saluran ini.</strong> Rakaman anda akan disemak pada hari bekerja seterusnya. Nada dan kelajuan percakapan boleh membantu pegawai mengutamakan semakan.",
     consentLabel: "Saya bersetuju suara saya dirakam dan ditranskripsikan untuk pengambilan ComCare.", continue: "Teruskan",
     recordHeading: "Sila perkenalkan diri dahulu, kemudian beritahu apa yang berlaku dan bantuan yang diperlukan.",
@@ -65,7 +68,7 @@ const COPY = {
     statusChecked: "சிங்கப்பூர் நேரம் சரிபார்க்கப்பட்டது", demoTime: "டெமோ நேரம் செயலில் உள்ளது", titleOpen: "நேரடி அதிகாரி இப்போது கிடைக்கிறார்", titleAnswered: "SilverArch பதிலளித்துள்ளது",
     openLead: "ComCare தொலைபேசி சேவை தினமும் காலை 7 மணி முதல் நள்ளிரவு வரை திறந்திருக்கும்.", closedLead: "நேரடி தொலைபேசி சேவை மூடப்பட்டுள்ளது. அடுத்த வேலை நாளில் பார்க்க குரல் பதிவை விடலாம்.",
     openMessage: "ComCare அதிகாரி இப்போது கிடைக்கிறார். தொலைபேசி சேவை திறந்திருக்கும் நேரத்தில் SilverArch பதிவு செய்யாது.", callHotline: "1800-222-0000 அழைக்கவும்",
-    chooseKicker: "மொழியைத் தேர்வுசெய்க", chooseTitle: "எந்த மொழியில் தொடர விரும்புகிறீர்கள்?", playGreeting: "வணக்கத்தை ஒலிக்கவும்", playConsent: "ஒப்புதல் விளக்கத்தை ஒலிக்கவும்", playInstructions: "வழிமுறைகளை ஒலிக்கவும்",
+    chooseKicker: "மொழியைத் தேர்வுசெய்க", chooseTitle: "எந்த மொழியில் தொடர விரும்புகிறீர்கள்?",
     consentNotice: "<strong>இந்த சேனலில் நேரடி அதிகாரி இல்லை.</strong> உங்கள் பதிவு அடுத்த வேலை நாளில் பரிசீலிக்கப்படும். குரல் தொனி மற்றும் வேகம் முன்னுரிமை மதிப்பீட்டுக்கு உதவலாம்.",
     consentLabel: "ComCare intake க்காக என் குரல் பதிவு செய்யப்பட்டு உரையாக மாற்றப்படுவதற்கு நான் ஒப்புக்கொள்கிறேன்.", continue: "தொடரவும்",
     recordHeading: "முதலில் உங்களை அறிமுகப்படுத்தி, என்ன நடந்தது மற்றும் எந்த உதவி தேவை என்பதைச் சொல்லுங்கள்.",
@@ -82,7 +85,10 @@ const COPY = {
 function copy() { return COPY[language] || COPY.en; }
 
 function show(selector) {
+  stopReadAloud();
+  currentPanel = selector;
   panels.forEach((item) => $(item).classList.toggle("hidden", item !== selector));
+  updateEarButtons();
 }
 
 async function loadGate(demoHour = new URLSearchParams(location.search).get("demoHour")) {
@@ -94,35 +100,21 @@ async function loadGate(demoHour = new URLSearchParams(location.search).get("dem
 
 async function renderCopy() {
   const t = copy();
+  stopReadAloud();
+  ensureEarButtons();
   document.documentElement.lang = language;
-  $("#status-label").textContent = gate?.demoOverride ? t.demoTime : t.statusChecked;
-  $("#title").textContent = gate?.mode === "open" ? t.titleOpen : t.titleAnswered;
-  $("#message").textContent = gate?.mode === "open" ? t.openLead : t.closedLead;
-  $("#open-message").textContent = t.openMessage; $("#open-call").textContent = t.callHotline;
-  $("#language-kicker").textContent = t.chooseKicker; $("#language-title").textContent = t.chooseTitle;
-  $("#play-greeting").textContent = t.playGreeting; $("#play-consent").textContent = t.playConsent; $("#play-recording-instructions").textContent = t.playInstructions;
-  $("#consent-notice").innerHTML = t.consentNotice; $("#consent-label").textContent = t.consentLabel; $("#continue").textContent = t.continue;
-  $("#record-heading").textContent = t.recordHeading; $("#prompt-intro").textContent = t.promptIntro; $("#prompt-list").innerHTML = t.promptItems.map((item) => `<li>${escapeHtml(item)}</li>`).join(""); $("#prompt-small").textContent = t.promptSmall;
-  $("#record-again").textContent = t.recordAgain; $("#to-contact").textContent = t.continue; $("#record-status").textContent = recording ? t.review : t.tapStart;
-  $("#contact-kicker").textContent = t.contactKicker; $("#contact-title").textContent = t.contactTitle; $("#contact-notice").textContent = t.contactNotice; $("#phone-label").textContent = t.phoneLabel; $("#phone-help").textContent = t.phoneHelp; $("#submit").textContent = t.submit; $("#back-to-recording").textContent = t.back;
-  $("#done-title").textContent = t.doneTitle; $("#done-message").innerHTML = t.doneMessage; $("#emergency").innerHTML = t.emergency;
-  await updatePromptAudio();
-}
-
-async function updatePromptAudio() {
-  await Promise.all(PROMPTS.map(async (prompt) => {
-    const button = $(`#play-${prompt}`);
-    if (!button) return;
-    const url = `/audio/prompts/${language}-${prompt}.mp3`;
-    try {
-      const response = await fetch(url, { method: "HEAD" });
-      button.classList.toggle("hidden", !response.ok);
-      button.dataset.audioUrl = response.ok ? url : "";
-    } catch {
-      button.classList.add("hidden");
-      button.dataset.audioUrl = "";
-    }
-  }));
+  setReadableText("#status-label", gate?.demoOverride ? t.demoTime : t.statusChecked);
+  setReadableText("#title", gate?.mode === "open" ? t.titleOpen : t.titleAnswered);
+  setReadableText("#message", gate?.mode === "open" ? t.openLead : t.closedLead);
+  setReadableText("#open-message", t.openMessage); setReadableText("#open-call", t.callHotline);
+  setReadableText("#language-kicker", t.chooseKicker); setReadableText("#language-title", t.chooseTitle);
+  document.querySelectorAll("[data-language]").forEach((button) => setReadableNode(button, button.textContent.trim()));
+  setReadableText("#consent-notice", stripHtml(t.consentNotice)); setReadableText("#consent-label", t.consentLabel); setReadableText("#continue", t.continue);
+  setReadableText("#record-heading", t.recordHeading); setReadableText("#prompt-intro", t.promptIntro); $("#prompt-list").innerHTML = t.promptItems.map((item) => `<li data-read-text="${escapeHtml(item)}">${tokenizeHtml(item)}</li>`).join(""); setReadableText("#prompt-small", t.promptSmall);
+  setReadableText("#record-again", t.recordAgain); setReadableText("#to-contact", t.continue); setReadableText("#record-status", recording ? t.review : t.tapStart);
+  setReadableText("#contact-kicker", t.contactKicker); setReadableText("#contact-title", t.contactTitle); setReadableText("#contact-notice", t.contactNotice); setReadableText("#phone-label", t.phoneLabel); setReadableText("#phone-help", t.phoneHelp); setReadableText("#submit", t.submit); setReadableText("#back-to-recording", t.back);
+  setReadableText("#done-title", t.doneTitle); setReadableText("#done-message", stripHtml(t.doneMessage)); setReadableText("#emergency", stripHtml(t.emergency));
+  updateEarButtons();
 }
 
 function escapeHtml(value = "") {
@@ -130,21 +122,16 @@ function escapeHtml(value = "") {
 }
 
 document.querySelectorAll("[data-language]").forEach((button) => button.addEventListener("click", async () => {
+  stopReadAloud();
   language = button.dataset.language;
   await renderCopy();
   show("#consent-panel");
 }));
 
-document.querySelectorAll(".prompt-audio").forEach((button) => button.addEventListener("click", () => {
-  if (!button.dataset.audioUrl) return;
-  promptAudio?.pause();
-  promptAudio = new Audio(button.dataset.audioUrl);
-  promptAudio.play();
-}));
-
 $("#consent").addEventListener("change", (event) => $("#continue").disabled = !event.target.checked);
 $("#continue").addEventListener("click", () => show("#record-panel"));
 $("#record").addEventListener("click", async () => {
+  stopReadAloud();
   const t = copy();
   if (recorder?.state === "recording") {
     recorder.stop();
@@ -167,7 +154,7 @@ $("#record").addEventListener("click", async () => {
       $("#recording-preview").classList.remove("hidden");
       $("#recording-actions").classList.remove("hidden");
       $("#record").classList.add("hidden");
-      $("#record-status").textContent = t.review;
+      setReadableText("#record-status", t.review);
     };
     recorder.start();
     startedAt = Date.now();
@@ -176,9 +163,9 @@ $("#record").addEventListener("click", async () => {
       $("#timer").textContent = `${String(Math.floor(seconds / 60)).padStart(2, "0")}:${String(seconds % 60).padStart(2, "0")}`;
     }, 250);
     $("#record").classList.add("active");
-    $("#record-status").textContent = t.recording;
+    setReadableText("#record-status", t.recording);
   } catch {
-    $("#record-status").textContent = t.mic;
+    setReadableText("#record-status", t.mic);
   }
 });
 
@@ -189,7 +176,7 @@ $("#record-again").addEventListener("click", () => {
   $("#recording-actions").classList.add("hidden");
   $("#record").classList.remove("hidden");
   $("#timer").textContent = "00:00";
-  $("#record-status").textContent = copy().tapStart;
+  setReadableText("#record-status", copy().tapStart);
 });
 
 $("#to-contact").addEventListener("click", () => show("#contact-panel"));
@@ -204,12 +191,12 @@ $("#submit").addEventListener("click", async () => {
   const t = copy();
   const phone = normalizedPhone($("#phone").value);
   if (!phone) {
-    $("#contact-status").textContent = t.invalidPhone;
+    setReadableText("#contact-status", t.invalidPhone);
     $("#phone").focus();
     return;
   }
   $("#submit").disabled = true;
-  $("#contact-status").textContent = t.sending;
+  setReadableText("#contact-status", t.sending);
   const response = await fetch("/api/cases", {
     method: "POST",
     headers: { "content-type": recording.type, "x-contact-phone": phone, "x-audio-duration-ms": String(recordingDurationMs), "x-intake-language": language, "x-intake-mode": "web-call-simulator", ...(gate.demoOverride && { "x-demo-override": "after-hours" }) },
@@ -217,13 +204,13 @@ $("#submit").addEventListener("click", async () => {
   });
   const body = await response.json();
   if (!response.ok) {
-    $("#contact-status").textContent = body.error || t.sendFail;
+    setReadableText("#contact-status", body.error || t.sendFail);
     $("#submit").disabled = false;
     return;
   }
   if (body.urgency?.urgent) {
-    $("#done-title").textContent = t.urgentTitle;
-    $("#done-message").innerHTML = t.urgentMessage(body.urgency.resource);
+    setReadableText("#done-title", t.urgentTitle);
+    setReadableText("#done-message", stripHtml(t.urgentMessage(body.urgency.resource)));
   }
   show("#done-panel");
 });
@@ -235,3 +222,305 @@ document.querySelectorAll("[data-hour]").forEach((button) => button.addEventList
 }));
 
 setTimeout(() => loadGate(), 650);
+
+function ensureEarButtons() {
+  const button = $("#read-page");
+  if (!button || button.dataset.bound === "true") return;
+  button.dataset.bound = "true";
+  button.addEventListener("click", () => toggleReadAloud(button));
+}
+
+function updateEarButtons() {
+  const supported = typeof window.speechSynthesis !== "undefined" && typeof window.SpeechSynthesisUtterance !== "undefined";
+  document.querySelectorAll(".read-page").forEach((button) => {
+    button.disabled = !supported;
+    if (!supported) button.setAttribute("aria-disabled", "true"); else button.removeAttribute("aria-disabled");
+    button.title = supported ? "Read this page aloud" : "Read-aloud is not supported in this browser.";
+    button.classList.toggle("unsupported", !supported);
+  });
+}
+
+function toggleReadAloud(button) {
+  if (speechState.utterance) {
+    stopReadAloud();
+    return;
+  }
+  if (typeof window.speechSynthesis === "undefined" || typeof window.SpeechSynthesisUtterance === "undefined") return;
+  const items = readableItemsForCurrentPage();
+  let offset = 0;
+  const chunks = [];
+  const tokens = [];
+  const separator = language === "zh" ? "。" : ". ";
+  for (const item of items) {
+    const chunk = item.dataset.readText.trim();
+    if (!chunk) continue;
+    const localTokens = [...item.querySelectorAll("[data-read-token]")];
+    localTokens.forEach((token) => {
+      token.dataset.readStartGlobal = String(offset + Number(token.dataset.readStart || 0));
+      token.dataset.readEndGlobal = String(offset + Number(token.dataset.readEnd || 0));
+      tokens.push(token);
+    });
+    chunks.push(chunk);
+    offset += chunk.length + separator.length;
+  }
+  const text = chunks.join(separator);
+  if (!text.trim()) return;
+  if (language === "zh") {
+    speakChineseChunkQueue(button, items);
+    return;
+  }
+  const utterance = new SpeechSynthesisUtterance(speechText(text));
+  utterance.lang = SPEECH_LANG[language] || SPEECH_LANG.en;
+  utterance.rate = SPEECH_RATE[language] || SPEECH_RATE.en;
+  utterance.pitch = 1;
+  utterance.volume = 1;
+  const voice = bestVoiceForLanguage(utterance.lang);
+  if (voice) utterance.voice = voice;
+  speechState = { utterance, tokens, activeIndex: -1, fallbackTimer: null, boundarySeen: false, lastBoundaryAt: Date.now() };
+  button.classList.add("active");
+  utterance.onboundary = (event) => {
+    speechState.boundarySeen = true;
+    speechState.lastBoundaryAt = Date.now();
+    highlightSpeechToken(event.charIndex);
+  };
+  utterance.onend = () => stopReadAloud();
+  utterance.onerror = () => stopReadAloud();
+  window.speechSynthesis.cancel();
+  window.speechSynthesis.speak(utterance);
+  if (tokens.length) setActiveToken(0);
+  startFallbackHighlight(tokens);
+}
+
+function speakChineseChunkQueue(button, items) {
+  const chunks = chineseReadableChunks(items);
+  if (!chunks.length) return;
+  window.speechSynthesis.cancel();
+  button.classList.add("active");
+  speechState = { utterance: null, tokens: chunks, activeIndex: -1, fallbackTimer: null, boundarySeen: false, lastBoundaryAt: Date.now(), queue: { index: 0, partIndex: 0, stopped: false } };
+  speakNextChineseChunk(button);
+}
+
+function chineseReadableChunks(items) {
+  return items.flatMap((item) => sentenceParts(item.dataset.readText)
+    .map((text) => ({ text, element: item, parts: mixedLanguageParts(text) }))
+    .filter((chunk) => chunk.text.trim()));
+}
+
+function sentenceParts(text = "") {
+  const normalized = String(text).replace(/\s+/g, " ").trim();
+  if (!normalized) return [];
+  const parts = normalized.match(/[^。！？!?]+[。！？!?]?/gu) || [normalized];
+  return parts.map((part) => part.trim()).filter(Boolean);
+}
+
+function mixedLanguageParts(text = "") {
+  const parts = [];
+  const pattern = /[A-Za-z][A-Za-z0-9-]*/g;
+  let cursor = 0;
+  for (const match of text.matchAll(pattern)) {
+    if (match.index > cursor) parts.push({ text: text.slice(cursor, match.index).trim(), lang: SPEECH_LANG.zh });
+    parts.push({ text: match[0], lang: SPEECH_LANG.en });
+    cursor = match.index + match[0].length;
+  }
+  if (cursor < text.length) parts.push({ text: text.slice(cursor).trim(), lang: SPEECH_LANG.zh });
+  return parts.filter((part) => part.text);
+}
+
+function speechText(text = "") {
+  return String(text).replace(/\b([A-Z]{2,})\b/g, (_match, acronym) => acronym.split("").join(" "));
+}
+
+function speakNextChineseChunk(button) {
+  const queue = speechState.queue;
+  if (!queue || queue.stopped) return;
+  const chunk = speechState.tokens[queue.index];
+  if (!chunk) {
+    stopReadAloud();
+    return;
+  }
+  setActiveChunk(queue.index);
+  const part = chunk.parts[queue.partIndex];
+  if (!part) {
+    queue.index += 1;
+    queue.partIndex = 0;
+    window.setTimeout(() => speakNextChineseChunk(button), 120);
+    return;
+  }
+  const text = part.text;
+  const lang = part.lang;
+  const utterance = new SpeechSynthesisUtterance(speechText(text));
+  utterance.lang = lang;
+  utterance.rate = lang.startsWith("en") ? 0.78 : 0.64;
+  utterance.pitch = 1;
+  utterance.volume = 1;
+  const voice = bestVoiceForLanguage(lang);
+  if (voice) utterance.voice = voice;
+  speechState.utterance = utterance;
+  utterance.onend = () => {
+    if (!speechState.queue || speechState.queue.stopped) return;
+    speechState.queue.partIndex += 1;
+    window.setTimeout(() => speakNextChineseChunk(button), lang.startsWith("en") ? 70 : 40);
+  };
+  utterance.onerror = () => {
+    if (!speechState.queue || speechState.queue.stopped) return;
+    speechState.queue.partIndex += 1;
+    window.setTimeout(() => speakNextChineseChunk(button), 60);
+  };
+  window.speechSynthesis.speak(utterance);
+}
+
+function readableItemsForCurrentPage() {
+  const activePanel = $(currentPanel);
+  const items = [];
+  if (currentPanel === "#language-panel" && gate?.mode !== "open") items.push($("#title"), $("#message"));
+  if (activePanel) items.push(...activePanel.querySelectorAll("[data-read-text]"));
+  return items.filter((element) => element && !element.closest(".hidden") && element.dataset.readText?.trim());
+}
+
+function bestVoiceForLanguage(lang) {
+  const voices = window.speechSynthesis?.getVoices?.() || [];
+  const exact = voices.find((voice) => voice.lang?.toLowerCase() === lang.toLowerCase());
+  if (exact) return exact;
+  const prefix = lang.split("-")[0].toLowerCase();
+  return voices.find((voice) => voice.lang?.toLowerCase().startsWith(prefix)) || null;
+}
+
+function startFallbackHighlight(tokens) {
+  if (!tokens.length) return;
+  const intervalMs = FALLBACK_MS_PER_TOKEN[language] || FALLBACK_MS_PER_TOKEN.en;
+  speechState.fallbackTimer = window.setInterval(() => {
+    if (!speechState.utterance) return;
+    const graceMs = language === "zh" ? intervalMs * 0.9 : intervalMs * 1.4;
+    if (Date.now() - speechState.lastBoundaryAt < graceMs) return;
+    const index = Math.min(Math.max(speechState.activeIndex, 0) + 1, tokens.length - 1);
+    if (index !== speechState.activeIndex) setActiveToken(index);
+    speechState.lastBoundaryAt = Date.now();
+    if (index >= tokens.length - 1) {
+      window.clearInterval(speechState.fallbackTimer);
+      speechState.fallbackTimer = null;
+    }
+  }, intervalMs);
+}
+
+function highlightSpeechToken(charIndex) {
+  const tokens = speechState.tokens;
+  if (!tokens.length) return;
+  const exact = tokens.findIndex((token) => Number(token.dataset.readStartGlobal) <= charIndex && Number(token.dataset.readEndGlobal) > charIndex);
+  if (exact >= 0) {
+    setActiveToken(exact);
+    return;
+  }
+  const next = tokens.findIndex((token) => Number(token.dataset.readStartGlobal) > charIndex);
+  if (next >= 0) setActiveToken(next);
+}
+
+function setActiveToken(index) {
+  if (speechState.activeIndex >= 0) speechState.tokens[speechState.activeIndex]?.classList.remove("read-active");
+  speechState.activeIndex = index;
+  const token = speechState.tokens[index];
+  token?.classList.add("read-active");
+  token?.scrollIntoView({ block: "nearest", inline: "nearest", behavior: "smooth" });
+}
+
+function setActiveChunk(index) {
+  if (speechState.activeIndex >= 0) speechState.tokens[speechState.activeIndex]?.element?.classList.remove("read-active");
+  speechState.activeIndex = index;
+  const chunk = speechState.tokens[index];
+  chunk?.element?.classList.add("read-active");
+  chunk?.element?.scrollIntoView({ block: "nearest", inline: "nearest", behavior: "smooth" });
+}
+
+function stopReadAloud() {
+  if (speechState.queue) speechState.queue.stopped = true;
+  if (typeof window.speechSynthesis !== "undefined") window.speechSynthesis.cancel();
+  if (speechState.fallbackTimer) window.clearInterval(speechState.fallbackTimer);
+  document.querySelectorAll(".read-active").forEach((node) => node.classList.remove("read-active"));
+  document.querySelectorAll(".read-page.active").forEach((node) => node.classList.remove("active"));
+  speechState = { utterance: null, tokens: [], activeIndex: -1, fallbackTimer: null, boundarySeen: false, lastBoundaryAt: 0, queue: null };
+}
+
+function setReadableText(selector, value) {
+  const element = $(selector);
+  if (!element) return;
+  setReadableNode(element, value);
+}
+
+function setReadableNode(element, value) {
+  element.dataset.readText = value;
+  element.innerHTML = tokenizeHtml(value);
+}
+
+function tokenizeHtml(value = "") {
+  return readableSegments(String(value)).map((part) => {
+    if (!part.readable) return escapeHtml(part.text);
+    return `<span data-read-token data-read-start="${part.start}" data-read-end="${part.end}">${escapeHtml(part.text)}</span>`;
+  }).join("");
+}
+
+function readableSegments(value = "") {
+  if (language === "zh") return segmentChinese(value);
+  if (typeof Intl !== "undefined" && Intl.Segmenter) return segmentWithIntl(value, language);
+  return segmentByWhitespace(value);
+}
+
+function segmentChinese(value = "") {
+  if (typeof Intl !== "undefined" && Intl.Segmenter) {
+    const segmented = segmentWithIntl(value, "zh");
+    if (segmented.some((part) => part.readable && part.text.length > 1)) return segmented;
+  }
+  return segmentChineseFallback(value);
+}
+
+function segmentChineseFallback(value = "") {
+  const segments = [];
+  const punctuation = /^[，。！？、；：,.!?;:]$/u;
+  let cursor = 0;
+  let buffer = "";
+  let bufferStart = 0;
+  const flush = () => {
+    while (buffer.length > 0) {
+      const chunk = buffer.slice(0, Math.min(buffer.length, 2));
+      segments.push({ text: chunk, start: bufferStart, end: bufferStart + chunk.length, readable: true });
+      buffer = buffer.slice(chunk.length);
+      bufferStart += chunk.length;
+    }
+  };
+  for (const char of value) {
+    const start = cursor;
+    cursor += char.length;
+    if (!char.trim() || punctuation.test(char) || /[A-Za-z0-9]/u.test(char)) {
+      flush();
+      segments.push({ text: char, start, end: cursor, readable: Boolean(char.trim() && !punctuation.test(char)) });
+      continue;
+    }
+    if (!buffer) bufferStart = start;
+    buffer += char;
+  }
+  flush();
+  return segments;
+}
+
+function segmentWithIntl(value = "", locale = "en") {
+  const segmenter = new Intl.Segmenter(SPEECH_LANG[locale] || locale, { granularity: "word" });
+  const segments = [];
+  for (const part of segmenter.segment(value)) {
+    const text = part.segment;
+    segments.push({ text, start: part.index, end: part.index + text.length, readable: Boolean(part.isWordLike || text.trim().match(/[0-9]/u)) });
+  }
+  return segments.length ? segments : segmentByWhitespace(value);
+}
+
+function segmentByWhitespace(value = "") {
+  let cursor = 0;
+  return value.split(/(\s+)/).map((part) => {
+    const start = cursor;
+    cursor += part.length;
+    return { text: part, start, end: cursor, readable: Boolean(part.trim()) };
+  });
+}
+
+function stripHtml(value = "") {
+  const template = document.createElement("template");
+  template.innerHTML = String(value);
+  return template.content.textContent || "";
+}

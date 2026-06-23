@@ -11,7 +11,10 @@
   <main class="phone-shell">
     <section class="phone" aria-live="polite">
       <div class="phone-speaker"></div>
-      <p class="eyebrow" id="status-label">Connecting…</p>
+      <div class="status-row">
+        <p class="eyebrow" id="status-label">Connecting…</p>
+        <button id="read-page" class="read-page" type="button" aria-label="Read this page aloud" title="Read this page aloud">👂</button>
+      </div>
       <div class="avatar">SA</div>
       <h1 id="title">Calling ComCare</h1>
       <p class="lead" id="message">Checking whether a live officer is available.</p>
@@ -30,11 +33,9 @@
           <button class="secondary" data-language="ms">Melayu</button>
           <button class="secondary" data-language="ta">தமிழ்</button>
         </div>
-        <button id="play-greeting" class="text-button prompt-audio hidden" type="button">Play greeting</button>
       </section>
 
       <section id="consent-panel" class="panel hidden">
-        <button id="play-consent" class="text-button prompt-audio hidden" type="button">Play consent</button>
         <div id="consent-notice" class="notice"><strong>No live officer is on this channel.</strong> Your recording will be reviewed on the next working day. Tone and pacing may help an officer prioritise review.</div>
         <label class="consent"><input id="consent" type="checkbox"> <span id="consent-label">I agree to have my voice recorded and transcribed for ComCare intake.</span></label>
         <button id="continue" class="primary" disabled>Continue</button>
@@ -42,7 +43,6 @@
 
       <section id="record-panel" class="panel hidden">
         <div id="timer" class="timer">00:00</div>
-        <button id="play-recording-instructions" class="text-button prompt-audio hidden" type="button">Play instructions</button>
         <p><strong id="record-heading">Please introduce yourself first, then tell us what happened and what help you need.</strong></p>
         <div class="prompt-card">
           <span id="prompt-intro">To help the officer understand your situation, please mention:</span>

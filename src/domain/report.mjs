@@ -58,10 +58,25 @@ export function buildReportDraft(caseItem, version = 1, now = new Date().toISOSt
     urgency: caseItem.urgency || { urgent: false },
     reviewReasons: [...(caseItem.reviewReasons || [])],
     schemes: (caseItem.triage?.shortlist || []).map((scheme) => ({ schemeId: scheme.schemeId, name: scheme.name, softScore: scheme.softScore, reasoning: generatedSchemes.get(scheme.schemeId) || scheme.officerReasoning || scheme.reasoning, appealRelevant: scheme.appealRelevant || [], insufficientInformation: scheme.insufficientInformation || [], evidenceRefs: scheme.evidenceRefs || [] })),
-    evidence: (caseItem.evidence || []).map(({ category, label, text, start, sentenceStart, requiresVerification }) => ({ category, label, text, start, sentenceStart, requiresVerification })),
+    evidence: reportEvidence(caseItem),
     transcripts: { verified: redactTranscript(verifiedTranscript, caseItem.piiProposals), original: redactTranscript(originalTranscript, caseItem.piiProposals), english: caseItem.translation?.status === "ready" ? redactTranscript(caseItem.translation.english?.text || "", caseItem.piiProposals) : null },
     declaration: { confirmed: Boolean(caseItem.reviewAcknowledgements?.declaration), statement: "The preparing officer confirms that the available audio, transcript, evidence and review flags were considered. This supporting report is not an eligibility determination." }
   };
+}
+
+export function reportEvidence(caseItem = {}) {
+  const items = [
+    ...(caseItem.evidence || []).map(({ id, category, label, text, start, sentenceStart, requiresVerification }) => ({ id, category, label, text, start, sentenceStart, requiresVerification })),
+    ...(caseItem.callerProfile?.characteristics || []).map(({ evidenceId, category, label, value, start, sentenceStart, requiresVerification }) => ({ id: evidenceId, category, label, text: value, start, sentenceStart, requiresVerification })),
+    ...(caseItem.triage?.shortlist || []).flatMap((scheme) => (scheme.evidenceRefs || []).map(({ id, category, quote, start, sentenceStart }) => ({ id, category, label: scheme.name || "Scheme evidence", text: quote, start, sentenceStart, requiresVerification: false })))
+  ].filter((item) => filled(item.text));
+  const seen = new Set();
+  return items.filter((item) => {
+    const key = item.id || `${item.category}:${String(item.text).toLowerCase().replace(/\s+/g, " ").trim()}:${Number(item.start || 0).toFixed(2)}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  }).sort((a, b) => Number(a.start || 0) - Number(b.start || 0) || String(a.label).localeCompare(String(b.label)));
 }
 
 export function buildReportMaterial(caseItem = {}) {

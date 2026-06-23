@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { buildReportDraft, redactTranscript, reportDraftReadiness, reportReadiness, reportTextLines } from "../src/domain/report.mjs";
+import { buildReportDraft, redactTranscript, reportDraftReadiness, reportEvidence, reportReadiness, reportTextLines } from "../src/domain/report.mjs";
 import { draftReportWithFallback } from "../src/services/report-drafter.mjs";
 import { renderReportDocx, renderReportPdf } from "../src/services/report-renderer.mjs";
 
@@ -62,6 +62,19 @@ test("DOCX and PDF render from the same canonical report model", async () => {
   assert.equal(pdf.subarray(0, 4).toString(), "%PDF");
   assert.ok(docx.length > 5_000);
   assert.ok(pdf.length > 2_000);
+});
+
+test("report evidence merges full evidence, caller characteristics and scheme references without duplicates", () => {
+  const item = completeCase();
+  item.callerProfile.characteristics = [{ evidenceId: "age-0", category: "age", label: "Age", value: "thirty-five years old", start: 4.2, sentenceStart: 2.1 }];
+  item.triage.shortlist[0].evidenceRefs = [
+    { id: "income-1", category: "income", quote: "no income", start: 7.5, sentenceStart: 6 },
+    { id: "age-0", category: "age", quote: "thirty-five years old", start: 4.2, sentenceStart: 2.1 }
+  ];
+  const evidence = reportEvidence(item);
+  assert.ok(evidence.some((entry) => entry.text === "thirty-five years old"));
+  assert.ok(evidence.some((entry) => entry.text === "no income"));
+  assert.equal(evidence.filter((entry) => entry.id === "age-0").length, 1);
 });
 
 test("report drafting uses MERaLiON first and OpenAI as fallback", async () => {
