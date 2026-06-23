@@ -8,33 +8,15 @@ export const REPORT_FACTS = [
 
 const filled = (value) => String(value ?? "").trim().length > 0;
 
-export function reportReadiness(caseItem = {}) {
+export function reportReadiness(caseItem = {}, { reportDraftingAvailable = true } = {}) {
   const missing = [];
+  if (!reportDraftingAvailable) missing.push({ id: "report-provider", label: "Configure MERaLiON or OpenAI report drafting before generating a report" });
   const officer = caseItem.officerProfile || {};
   if (!filled(officer.name)) missing.push({ id: "officer-name", label: "Officer name is required" });
   if (!filled(officer.designation)) missing.push({ id: "officer-designation", label: "Officer designation is required" });
   if (!filled(officer.sso)) missing.push({ id: "officer-sso", label: "Social Service Office is required" });
-  if (!filled(caseItem.transcript?.editedText)) missing.push({ id: "verified-transcript", label: "Save a verified transcript" });
-  if (!filled(caseItem.callerProfile?.officerSummary)) missing.push({ id: "verified-summary", label: "Save a verified caller summary" });
-
-  for (const [key, label] of REPORT_FACTS) {
-    const review = caseItem.factReviews?.[key];
-    if (!review || !["verified", "unknown"].includes(review.status)) missing.push({ id: `fact-${key}`, label: `Review ${label.toLowerCase()}` });
-    else if (review.status === "verified" && !filled(review.value)) missing.push({ id: `fact-${key}`, label: `Enter ${label.toLowerCase()}` });
-    else if (review.status === "unknown" && !filled(review.explanation)) missing.push({ id: `fact-${key}`, label: `Explain why ${label.toLowerCase()} could not be verified` });
-  }
-
-  for (const scheme of caseItem.triage?.shortlist || []) {
-    if (!filled(scheme.officerReasoning)) missing.push({ id: `scheme-${scheme.schemeId}`, label: `Add officer reasoning for ${scheme.name}` });
-  }
   if ((caseItem.piiProposals || []).some((proposal) => proposal.status === "proposed")) missing.push({ id: "pii", label: "Resolve all PII proposals" });
-
-  const consolidation = caseItem.consolidation || {};
-  if (!filled(consolidation.presentingCircumstances)) missing.push({ id: "presenting-circumstances", label: "Complete presenting circumstances" });
-  if (!filled(consolidation.assessment)) missing.push({ id: "officer-assessment", label: "Complete the officer assessment" });
-  if (!filled(consolidation.recommendedFollowUp)) missing.push({ id: "recommended-follow-up", label: "Complete recommended follow-up" });
   const hasReviewFlags = Boolean(caseItem.urgency?.urgent || caseItem.reviewReasons?.length || caseItem.transcript?.confidenceFlags?.length);
-  if (hasReviewFlags && !filled(consolidation.safeguardsResolution)) missing.push({ id: "safeguards", label: "Document how review flags and safeguards were addressed" });
   if (hasReviewFlags && !caseItem.reviewAcknowledgements?.flagsReviewed) missing.push({ id: "flags-reviewed", label: "Confirm all review flags were considered" });
   if (!caseItem.reviewAcknowledgements?.transcriptReviewed) missing.push({ id: "transcript-reviewed", label: "Confirm the audio, transcript and evidence were reviewed" });
   if (!caseItem.reviewAcknowledgements?.declaration) missing.push({ id: "declaration", label: "Complete the officer declaration" });
@@ -50,10 +32,12 @@ export function redactTranscript(text = "", proposals = []) {
   return redacted;
 }
 
-export function buildReportDraft(caseItem, version = 1, now = new Date().toISOString()) {
-  const factReviews = Object.fromEntries(REPORT_FACTS.map(([key, label]) => [key, { label, ...(caseItem.factReviews?.[key] || { status: "unknown", explanation: "Not provided" }) }]));
+export function buildReportDraft(caseItem, version = 1, now = new Date().toISOString(), generated = {}) {
+  const generatedFacts = generated.facts || {};
+  const factReviews = Object.fromEntries(REPORT_FACTS.map(([key, label]) => [key, { label, ...(generatedFacts[key] || caseItem.factReviews?.[key] || { status: "unknown", explanation: "Not provided" }) }]));
   const verifiedTranscript = caseItem.transcript?.editedText || caseItem.transcript?.text || "";
   const originalTranscript = caseItem.transcript?.originalText || caseItem.transcript?.text || "";
+  const generatedSchemes = new Map((generated.schemes || []).map((scheme) => [scheme.schemeId, scheme.reasoning]));
   return {
     caseId: caseItem.id,
     version,
@@ -62,16 +46,44 @@ export function buildReportDraft(caseItem, version = 1, now = new Date().toISOSt
     createdAt: now,
     updatedAt: now,
     preparedBy: { ...caseItem.officerProfile },
-    metadata: { caseCreatedAt: caseItem.createdAt, asrEngine: caseItem.transcript?.asrEngine || "Unavailable", sourceLanguage: caseItem.transcript?.languageCode || "Unknown", translationStatus: caseItem.translation?.status || "not-required", translationProvider: caseItem.translation?.provider || null },
-    applicant: { contactPhone: caseItem.contact?.phone || "Not collected", summary: caseItem.callerProfile?.officerSummary || caseItem.callerProfile?.summary || "" },
-    sections: { ...caseItem.consolidation },
+    metadata: { caseCreatedAt: caseItem.createdAt, asrEngine: caseItem.transcript?.asrEngine || "Unavailable", sourceLanguage: caseItem.transcript?.languageCode || "Unknown", translationStatus: caseItem.translation?.status || "not-required", translationProvider: caseItem.translation?.provider || null, reportDraftProvider: generated.provider || null, reportDraftFallbackReason: generated.fallbackReason || null, generatedAt: generated.provider ? now : null },
+    applicant: { contactPhone: caseItem.contact?.phone || "Not collected", summary: generated.applicantSummary || caseItem.callerProfile?.officerSummary || caseItem.callerProfile?.summary || "" },
+    sections: {
+      presentingCircumstances: generated.sections?.presentingCircumstances || caseItem.consolidation?.presentingCircumstances || "",
+      assessment: generated.sections?.assessment || caseItem.consolidation?.assessment || "",
+      recommendedFollowUp: generated.sections?.recommendedFollowUp || caseItem.consolidation?.recommendedFollowUp || "",
+      safeguardsResolution: generated.sections?.safeguardsResolution || caseItem.consolidation?.safeguardsResolution || ""
+    },
     facts: factReviews,
     urgency: caseItem.urgency || { urgent: false },
     reviewReasons: [...(caseItem.reviewReasons || [])],
-    schemes: (caseItem.triage?.shortlist || []).map((scheme) => ({ schemeId: scheme.schemeId, name: scheme.name, softScore: scheme.softScore, reasoning: scheme.officerReasoning || scheme.reasoning, appealRelevant: scheme.appealRelevant || [], insufficientInformation: scheme.insufficientInformation || [], evidenceRefs: scheme.evidenceRefs || [] })),
+    schemes: (caseItem.triage?.shortlist || []).map((scheme) => ({ schemeId: scheme.schemeId, name: scheme.name, softScore: scheme.softScore, reasoning: generatedSchemes.get(scheme.schemeId) || scheme.officerReasoning || scheme.reasoning, appealRelevant: scheme.appealRelevant || [], insufficientInformation: scheme.insufficientInformation || [], evidenceRefs: scheme.evidenceRefs || [] })),
     evidence: (caseItem.evidence || []).map(({ category, label, text, start, sentenceStart, requiresVerification }) => ({ category, label, text, start, sentenceStart, requiresVerification })),
     transcripts: { verified: redactTranscript(verifiedTranscript, caseItem.piiProposals), original: redactTranscript(originalTranscript, caseItem.piiProposals), english: caseItem.translation?.status === "ready" ? redactTranscript(caseItem.translation.english?.text || "", caseItem.piiProposals) : null },
     declaration: { confirmed: Boolean(caseItem.reviewAcknowledgements?.declaration), statement: "The preparing officer confirms that the available audio, transcript, evidence and review flags were considered. This supporting report is not an eligibility determination." }
+  };
+}
+
+export function buildReportMaterial(caseItem = {}) {
+  return {
+    caseId: caseItem.id,
+    createdAt: caseItem.createdAt,
+    contact: { phone: caseItem.contact?.phone || null },
+    intakeLanguage: caseItem.intakeLanguage || "en",
+    transcript: {
+      text: caseItem.transcript?.editedText || caseItem.transcript?.text || "",
+      originalText: caseItem.transcript?.originalText || caseItem.transcript?.text || "",
+      languageCode: caseItem.transcript?.languageCode || null,
+      confidenceFlags: caseItem.transcript?.confidenceFlags || []
+    },
+    englishTranslation: caseItem.translation?.status === "ready" ? caseItem.translation.english?.text || "" : "",
+    callerProfile: caseItem.callerProfile || {},
+    evidence: (caseItem.evidence || []).map(({ label, text, start, sentenceStart, category, requiresVerification }) => ({ label, text, start, sentenceStart, category, requiresVerification })),
+    facts: caseItem.factReviews || caseItem.triage?.officerFacts || caseItem.triage?.extractedFacts || {},
+    schemes: (caseItem.triage?.shortlist || []).map(({ schemeId, name, reasoning, softScore, appealRelevant, insufficientInformation, evidenceRefs }) => ({ schemeId, name, reasoning, softScore, appealRelevant, insufficientInformation, evidenceRefs })),
+    urgency: caseItem.urgency || {},
+    reviewReasons: caseItem.reviewReasons || [],
+    piiResolved: !(caseItem.piiProposals || []).some((proposal) => proposal.status === "proposed")
   };
 }
 
@@ -105,7 +117,7 @@ export function reportTextLines(report) {
   lines.push("Transcript appendix", report.transcripts.verified);
   if (report.transcripts.english && report.transcripts.english !== report.transcripts.verified) lines.push("English translation", report.transcripts.english);
   if (report.transcripts.original !== report.transcripts.verified) lines.push("Original ASR transcript", report.transcripts.original);
-  lines.push("Provider attribution", `ASR: ${report.metadata.asrEngine}; translation: ${report.metadata.translationStatus}${report.metadata.translationProvider ? ` (${report.metadata.translationProvider})` : ""}`, "Officer declaration", report.declaration.statement);
+  lines.push("Provider attribution", `ASR: ${report.metadata.asrEngine}; translation: ${report.metadata.translationStatus}${report.metadata.translationProvider ? ` (${report.metadata.translationProvider})` : ""}; report draft: ${report.metadata.reportDraftProvider || "manual/local"}`, "Officer declaration", report.declaration.statement);
   return lines.filter((line) => line !== null && line !== undefined && String(line).trim());
 }
 

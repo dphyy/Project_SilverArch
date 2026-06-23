@@ -18,16 +18,17 @@ test("hosted MERaLiON request is primary and normalizes timestamps", async () =>
 test("non-English translation uses MERaLiON first", async () => {
   let fallbackCalled = false;
   const primary = { name: "meralion", translate: async (sentences) => ({ text: "I need help.", sentences: [{ ...sentences[0], text: "I need help." }] }) };
-  const fallback = { name: "elevenlabs-dubbing", translate: async () => { fallbackCalled = true; } };
+  const fallback = { name: "google-translate", translate: async () => { fallbackCalled = true; } };
   const result = await translateWithFallback({ text: "我需要帮助。", languageCode: "zh", words: [{ text: "我需要帮助。", start: 2, end: 3 }] }, {}, { primary, fallback });
   assert.equal(result.provider, "meralion");
   assert.equal(fallbackCalled, false);
 });
 
-test("translation falls back to ElevenLabs Dubbing with attribution", async () => {
+test("translation falls back to Google text translation with attribution and timestamps", async () => {
   const primary = { name: "meralion", translate: async () => { throw new Error("MERaLiON timeout"); } };
-  const fallback = { name: "elevenlabs-dubbing", translate: async () => ({ text: "Need help", sentences: [{ text: "Need help", sourceStart: 4 }] }) };
-  const result = await translateWithFallback({ text: "需要帮助", languageCode: "zh" }, {}, { primary, fallback });
-  assert.equal(result.provider, "elevenlabs-dubbing");
+  const fallback = { name: "google-translate", translate: async (sentences) => ({ text: "Need help", sentences: [{ ...sentences[0], text: "Need help", sourceStart: sentences[0].start }] }) };
+  const result = await translateWithFallback({ text: "需要帮助。", languageCode: "zh", words: [{ text: "需要帮助。", start: 4, end: 5 }] }, {}, { primary, fallback });
+  assert.equal(result.provider, "google-translate");
   assert.equal(result.fallbackReason, "MERaLiON timeout");
+  assert.equal(result.english.sentences[0].sourceStart, 4);
 });

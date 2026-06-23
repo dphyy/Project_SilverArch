@@ -10,10 +10,11 @@ import { triageTranscript } from "./src/domain/triage.mjs";
 import { loadEnv } from "./src/services/env.mjs";
 import { buildCallerProfile, extractEvidence } from "./src/domain/evidence.mjs";
 import { maskPhone, normalizeSingaporePhone } from "./src/domain/contact.mjs";
-import { probeElevenLabsDubbing, transcriptFromTranslation, translateWithFallback } from "./src/services/translation.mjs";
+import { googleTranslateCapability, transcriptFromTranslation, translateWithFallback } from "./src/services/translation.mjs";
 import { parseByteRange } from "./src/domain/audio.mjs";
 import { buildReportDraft, reportDraftReadiness, reportReadiness } from "./src/domain/report.mjs";
 import { renderReportDocx, renderReportPdf } from "./src/services/report-renderer.mjs";
+import { draftReportWithFallback, reportDraftingCapability } from "./src/services/report-drafter.mjs";
 
 const ROOT = new URL(".", import.meta.url).pathname;
 await loadEnv(join(ROOT, ".env"));
@@ -22,9 +23,7 @@ const PUBLIC = join(ROOT, "public");
 const CASES_FILE = join(ROOT, "data", "cases.json");
 const AUDIO_DIR = join(ROOT, "data", "audio");
 const REPORTS_DIR = join(ROOT, "data", "reports");
-const MIME = { ".html": "text/html", ".css": "text/css", ".js": "text/javascript", ".json": "application/json", ".svg": "image/svg+xml" };
-let dubbingCapability = process.env.ELEVENLABS_API_KEY && process.env.ELEVENLABS_DUBBING_ENABLED === "true" ? "configured-unverified" : "unavailable";
-probeElevenLabsDubbing().then((status) => { dubbingCapability = status; });
+const MIME = { ".html": "text/html", ".css": "text/css", ".js": "text/javascript", ".json": "application/json", ".svg": "image/svg+xml", ".mp3": "audio/mpeg", ".wav": "audio/wav", ".ogg": "audio/ogg" };
 
 async function readCases() {
   try { return JSON.parse(await readFile(CASES_FILE, "utf8")); }
@@ -68,7 +67,8 @@ async function handleApi(request, response, url) {
       meralionConfigured: Boolean(process.env.MERALION_API_URL && process.env.MERALION_API_KEY),
       elevenLabsConfigured: Boolean(process.env.ELEVENLABS_API_KEY),
       fallbackModel: process.env.ELEVENLABS_STT_MODEL || "scribe_v2",
-      elevenLabsDubbing: dubbingCapability
+      googleTranslate: googleTranslateCapability(),
+      reportDrafting: reportDraftingCapability()
     });
   }
 
@@ -84,7 +84,8 @@ async function handleApi(request, response, url) {
 
   if (request.method === "GET" && url.pathname === "/api/cases") {
     const schemes = JSON.parse(await readFile(join(ROOT, "data", "schemes.json"), "utf8"));
-    return json(response, 200, (await readCases()).map((item) => { const refreshed = refreshCaseAnalysis(item, schemes); return { ...refreshed, reportReadiness: reportReadiness(refreshed) }; }));
+    const reportDraftingAvailable = reportDraftingCapability() !== "unavailable";
+    return json(response, 200, (await readCases()).map((item) => { const refreshed = refreshCaseAnalysis(item, schemes); return { ...refreshed, reportReadiness: reportReadiness(refreshed, { reportDraftingAvailable }) }; }));
   }
 
   if (request.method === "POST" && url.pathname === "/api/demo/fixtures") {
@@ -109,7 +110,7 @@ async function handleApi(request, response, url) {
   if (request.method === "GET" && readinessMatch) {
     const found = (await readCases()).find((item) => item.id === readinessMatch[1]);
     if (!found) return json(response, 404, { error: "Case not found" });
-    return json(response, 200, reportReadiness(found));
+    return json(response, 200, reportReadiness(found, { reportDraftingAvailable: reportDraftingCapability() !== "unavailable" }));
   }
 
   const reportMatch = url.pathname.match(/^\/api\/cases\/([A-Za-z0-9-]+)\/report$/);
@@ -123,14 +124,19 @@ async function handleApi(request, response, url) {
       return current ? json(response, 200, current) : json(response, 404, { error: "No report has been generated" });
     }
     if (request.method === "POST") {
-      const readiness = reportReadiness(cases[caseIndex]);
+      const readiness = reportReadiness(cases[caseIndex], { reportDraftingAvailable: reportDraftingCapability() !== "unavailable" });
       if (!readiness.ready) return json(response, 409, { error: "Case review is incomplete", readiness });
       if (store.draft?.status === "draft") return json(response, 200, store.draft);
       const version = Math.max(0, ...store.finalized.map((item) => Number(item.version) || 0)) + 1;
       const at = new Date().toISOString();
       const previous = store.finalized.at(-1);
-      store.draft = previous ? amendedReportDraft(previous, version, at) : buildReportDraft(cases[caseIndex], version, at);
-      cases[caseIndex] = { ...cases[caseIndex], status: "report-draft", reportSummary: { version, status: "draft", updatedAt: at }, auditEvents: [...(cases[caseIndex].auditEvents || []), { at, actor: "officer", action: "report-draft-created", detail: `Supporting report version ${version} created` }] };
+      let generated = null;
+      if (!previous) {
+        try { generated = await draftReportWithFallback(cases[caseIndex]); }
+        catch (error) { return json(response, 409, { error: error.message, causes: error.causes || [] }); }
+      }
+      store.draft = previous ? amendedReportDraft(previous, version, at) : buildReportDraft(cases[caseIndex], version, at, generated);
+      cases[caseIndex] = { ...cases[caseIndex], status: "report-draft", reportSummary: { version, status: "draft", updatedAt: at }, auditEvents: [...(cases[caseIndex].auditEvents || []), ...(generated?.fallbackReason ? [{ at, actor: "system", action: "report-draft-provider-fallback", detail: generated.fallbackReason }] : []), { at, actor: "system", action: "report-draft-generated", detail: generated ? `Supporting report version ${version} drafted by ${generated.provider}` : `Supporting report version ${version} amended from finalized report` }] };
       await Promise.all([writeReportStore(reportMatch[1], store), writeFile(CASES_FILE, `${JSON.stringify(cases, null, 2)}\n`)]);
       return json(response, 201, store.draft);
     }
@@ -208,6 +214,8 @@ async function handleApi(request, response, url) {
       audioUrl: `/api/cases/${id}/audio`,
       audioType,
       audioDurationMs: Math.max(0, Number(request.headers["x-audio-duration-ms"]) || 0),
+      intakeLanguage: normalizeIntakeLanguage(request.headers["x-intake-language"]),
+      intakeMode: "web-call-simulator",
       contact: { phone: contactPhone, maskedPhone: maskPhone(contactPhone), purpose: "SSO follow-up after case review" },
       transcript,
       translation,
@@ -266,7 +274,7 @@ async function handleApi(request, response, url) {
       auditEvents: [...(current.auditEvents || []), { at, actor: "officer", action, detail }]
     };
     await writeFile(CASES_FILE, `${JSON.stringify(cases, null, 2)}\n`);
-    return json(response, 200, { ...cases[index], reportReadiness: reportReadiness(cases[index]) });
+    return json(response, 200, { ...cases[index], reportReadiness: reportReadiness(cases[index], { reportDraftingAvailable: reportDraftingCapability() !== "unavailable" }) });
   }
 
   const audioMatch = url.pathname.match(/^\/api\/cases\/([^/]+)\/audio$/);
@@ -296,6 +304,10 @@ async function handleApi(request, response, url) {
 
 function cleanObject(input, keys, maxLength) {
   return Object.fromEntries(keys.map((key) => [key, String(input[key] ?? "").slice(0, maxLength)]));
+}
+
+function normalizeIntakeLanguage(value) {
+  return ["en", "zh", "ms", "ta"].includes(String(value || "").toLowerCase()) ? String(value).toLowerCase() : "en";
 }
 
 function cleanFactReviews(input) {
@@ -330,7 +342,7 @@ function buildFixtureCase(definition, schemes, index) {
   const evidence = extractEvidence(analysisTranscript);
   const lowConfidence = Boolean(definition.lowConfidence);
   const triage = lowConfidence ? { status: "manual-review", shortlist: [], reason: "Automatic shortlist withheld because transcript confidence is low" } : triageTranscript(analysisTranscript.text, schemes, evidence);
-  return { id: `fixture-${definition.id}`, isFixture: true, fixtureLabel: definition.label, createdAt, status: "needs-review", audioUrl: null, audioType: null, audioDurationMs: words.at(-1)?.end * 1000 || 0, contact: { phone: "+6590000000", maskedPhone: "+65 •••• 0000", purpose: "SSO follow-up after case review" }, transcript, translation, evidence, evidenceLanguage: definition.english ? "english" : "original", evidenceVersion: 3, callerProfile: lowConfidence ? { summary: "Automatic summary withheld because the transcript requires confidence review.", characteristics: [], missingCoreDetails: [] } : buildCallerProfile(evidence), urgency: screenUrgency(definition.text), piiProposals: proposePiiRedactions(definition.text), triage, reviewReasons: [...(transcript.confidenceFlags || []), ...(triage.status === "manual-review" ? ["Triage requires officer review"] : [])], auditEvents: [{ at: createdAt, actor: "system", action: "fixture-loaded", detail: definition.label }] };
+  return { id: `fixture-${definition.id}`, isFixture: true, fixtureLabel: definition.label, createdAt, status: "needs-review", audioUrl: null, audioType: null, audioDurationMs: words.at(-1)?.end * 1000 || 0, intakeLanguage: definition.languageCode === "zh" ? "zh" : "en", intakeMode: "web-call-simulator", contact: { phone: "+6590000000", maskedPhone: "+65 •••• 0000", purpose: "SSO follow-up after case review" }, transcript, translation, evidence, evidenceLanguage: definition.english ? "english" : "original", evidenceVersion: 3, callerProfile: lowConfidence ? { summary: "Automatic summary withheld because the transcript requires confidence review.", characteristics: [], missingCoreDetails: [] } : buildCallerProfile(evidence), urgency: screenUrgency(definition.text), piiProposals: proposePiiRedactions(definition.text), triage, reviewReasons: [...(transcript.confidenceFlags || []), ...(triage.status === "manual-review" ? ["Triage requires officer review"] : [])], auditEvents: [{ at: createdAt, actor: "system", action: "fixture-loaded", detail: definition.label }] };
 }
 
 async function serveStatic(response, pathname) {

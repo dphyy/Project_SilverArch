@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { buildReportDraft, redactTranscript, reportDraftReadiness, reportReadiness, reportTextLines } from "../src/domain/report.mjs";
+import { draftReportWithFallback } from "../src/services/report-drafter.mjs";
 import { renderReportDocx, renderReportPdf } from "../src/services/report-renderer.mjs";
 
 function completeCase() {
@@ -20,13 +21,18 @@ function completeCase() {
 
 test("report readiness blocks missing review fields and accepts explained unknowns", () => {
   const item = completeCase();
+  item.consolidation = {};
+  item.factReviews = {};
+  item.triage.shortlist[0].officerReasoning = "";
   assert.equal(reportReadiness(item).ready, true);
   delete item.officerProfile.name;
   assert.equal(reportReadiness(item).ready, false);
   assert.ok(reportReadiness(item).missing.some((entry) => entry.id === "officer-name"));
   item.officerProfile.name = "Alicia Lim";
-  item.factReviews.citizenship.explanation = "";
-  assert.ok(reportReadiness(item).missing.some((entry) => entry.id === "fact-citizenship"));
+  item.piiProposals[0].status = "proposed";
+  assert.ok(reportReadiness(item).missing.some((entry) => entry.id === "pii"));
+  item.piiProposals[0].status = "confirmed";
+  assert.ok(reportReadiness(item, { reportDraftingAvailable: false }).missing.some((entry) => entry.id === "report-provider"));
 });
 
 test("confirmed transcript PII is redacted while structured contact remains", () => {
@@ -56,4 +62,21 @@ test("DOCX and PDF render from the same canonical report model", async () => {
   assert.equal(pdf.subarray(0, 4).toString(), "%PDF");
   assert.ok(docx.length > 5_000);
   assert.ok(pdf.length > 2_000);
+});
+
+test("report drafting uses MERaLiON first and OpenAI as fallback", async () => {
+  const primary = { name: "meralion", draft: async () => { throw new Error("MERaLiON unavailable"); } };
+  const fallback = { name: "openai", draft: async () => ({ provider: "openai", applicantSummary: "Formal summary", sections: { presentingCircumstances: "Circumstances", assessment: "Assessment", recommendedFollowUp: "Follow up", safeguardsResolution: "" }, facts: { citizenship: { status: "unknown", explanation: "Not stated" }, applicantAge: { status: "verified", value: "35" }, householdIncome: { status: "verified", value: "0" }, householdSize: { status: "unknown", explanation: "Not stated" }, employment: { status: "verified", value: "Not working" } }, schemes: [{ schemeId: "smta", reasoning: "Consider under triage only." }] }) };
+  const draft = await draftReportWithFallback(completeCase(), { primary, fallback });
+  assert.equal(draft.provider, "openai");
+  assert.equal(draft.fallbackReason, "MERaLiON unavailable");
+  const report = buildReportDraft(completeCase(), 1, "2026-06-22T11:00:00.000Z", draft);
+  assert.equal(report.metadata.reportDraftProvider, "openai");
+  assert.equal(report.sections.assessment, "Assessment");
+});
+
+test("report drafting fails clearly when no provider is configured", async () => {
+  const primary = { name: "meralion", draft: async () => { throw new Error("MERALION_API_KEY is not configured for report drafting"); } };
+  const fallback = { name: "openai", draft: async () => { throw new Error("OPENAI_API_KEY is not configured for report drafting"); } };
+  await assert.rejects(() => draftReportWithFallback(completeCase(), { primary, fallback }), /Report drafting unavailable/);
 });

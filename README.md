@@ -21,9 +21,10 @@ Open `.env` and paste your key after the equals sign:
 ```dotenv
 ELEVENLABS_API_KEY=your_real_key_here
 ELEVENLABS_STT_MODEL=scribe_v2
-ELEVENLABS_DUBBING_ENABLED=true
 MERALION_API_URL=http://meralion.org:8010
 MERALION_API_KEY=your_meralion_key_here
+GOOGLE_TRANSLATE_API_KEY=your_google_translate_key_here
+OPENAI_API_KEY=optional_openai_report_fallback_key
 ```
 
 Restart `npm run dev` after changing `.env`. The key is read only by the Node server; it is never sent to the browser. `.env` is ignored by Git, while `.env.example` documents the required variables safely.
@@ -38,7 +39,7 @@ The server and client independently enforce ComCare's 7am–midnight Singapore h
 
 `src/services/asr.mjs` always attempts the MERaLiON provider first. Only an error or timeout activates ElevenLabs Scribe v2. The normalized result stores provider attribution, fallback reason, detected language, word timestamps, and explainable low-confidence flags.
 
-Non-English testimony is translated to English through MERaLiON first, then ElevenLabs Dubbing. The dashboard preserves the timestamped original above the English transcript and records translation attribution or failure without exposing keys.
+Non-English testimony is translated to English through MERaLiON first, then Google Cloud Translation. Google translates timestamped transcript sentences rather than raw audio, so the dashboard preserves the original ASR timestamps while showing English underneath. Translation attribution or failure is recorded without exposing keys.
 
 ### Safety and privacy signals
 
@@ -60,9 +61,11 @@ Use **Load demo fixtures** to add the seven fixed fictional cases and **Reset fi
 
 ### Editable supporting reports
 
-**Generate report** replaces the former Accept action. It remains disabled until the officer has reviewed the transcript, summary, facts, scheme reasoning, PII proposals and review flags; entered their name, designation and SSO; completed the three consolidation sections; and signed the declaration. A visible checklist identifies every missing item, and the server independently revalidates the gate.
+The citizen dashboard supports English, Mandarin Chinese, Malay and Tamil. Callers choose a language before consent; translated text appears throughout the web-call flow, and optional local MP3 prompt files can be placed under `public/audio/prompts/`. Missing prompt audio is ignored gracefully.
 
-Generated reports open on a dedicated editable page with the case audio and timestamped evidence alongside the draft. Draft revisions autosave explicitly to `data/reports/`, finalized versions are immutable, and later edits create a new amended version. Finalized reports download as genuine A4 DOCX or PDF files generated locally with `docx` and `pdfkit`. No additional AI API receives report data.
+**Generate report** replaces the former Accept action. It remains disabled until the officer has entered their name, designation and SSO; reviewed the available audio/transcript/evidence; resolved PII proposals; acknowledged review flags where present; and signed the declaration. SilverArch then drafts the formal report sections automatically from the transcript, evidence, caller profile, shortlist and flags. A visible checklist identifies every missing item, and the server independently revalidates the gate.
+
+Generated reports open on a dedicated editable page with the case audio and timestamped evidence alongside the draft. MERaLiON is used first for report drafting; OpenAI is used only as fallback when configured. Draft revisions autosave explicitly to `data/reports/`, finalized versions are immutable, and later edits create a new amended version. Finalized reports download as genuine A4 DOCX or PDF files generated locally with `docx` and `pdfkit`.
 
 The output is a **SilverArch Supporting Case Report for SSO Review**, not a government-issued form. It contains no crest or claim of agency endorsement and continues to separate triage support from eligibility decisions.
 
@@ -74,7 +77,7 @@ The output is a **SilverArch Supporting Case Report for SSO Review**, not a gove
 
 ## Next production steps
 
-1. Validate the hosted MERaLiON request/response contract and ElevenLabs Dubbing entitlement with non-sensitive recordings.
+1. Validate the hosted MERaLiON request/response contract, Google Cloud Translation key and optional OpenAI report fallback with non-sensitive recordings.
 2. Run domain review of every hard ceiling, flexible criterion and safety phrase.
 3. Add authenticated officer access, encrypted production storage and retention controls.
 4. Conduct accessibility, multilingual and noisy-audio evaluation before any real caller pilot.

@@ -17,29 +17,43 @@
       <p class="lead" id="message">Checking whether a live officer is available.</p>
 
       <section id="open-panel" class="panel hidden">
-        <p>A live ComCare officer is available now. SilverArch does not record during hotline hours.</p>
-        <a class="primary button" href="tel:18002220000">Call 1800-222-0000</a>
+        <p id="open-message">A live ComCare officer is available now. SilverArch does not record during hotline hours.</p>
+        <a id="open-call" class="primary button" href="tel:18002220000">Call 1800-222-0000</a>
+      </section>
+
+      <section id="language-panel" class="panel hidden">
+        <p class="eyebrow" id="language-kicker">Choose language</p>
+        <h2 id="language-title">How would you like to continue?</h2>
+        <div class="language-grid">
+          <button class="secondary" data-language="en">English</button>
+          <button class="secondary" data-language="zh">中文</button>
+          <button class="secondary" data-language="ms">Melayu</button>
+          <button class="secondary" data-language="ta">தமிழ்</button>
+        </div>
+        <button id="play-greeting" class="text-button prompt-audio hidden" type="button">Play greeting</button>
       </section>
 
       <section id="consent-panel" class="panel hidden">
-        <div class="notice"><strong>No live officer is on this channel.</strong> Your recording will be reviewed on the next working day. Tone and pacing may help an officer prioritise review.</div>
-        <label class="consent"><input id="consent" type="checkbox"> I agree to have my voice recorded and transcribed for ComCare intake.</label>
+        <button id="play-consent" class="text-button prompt-audio hidden" type="button">Play consent</button>
+        <div id="consent-notice" class="notice"><strong>No live officer is on this channel.</strong> Your recording will be reviewed on the next working day. Tone and pacing may help an officer prioritise review.</div>
+        <label class="consent"><input id="consent" type="checkbox"> <span id="consent-label">I agree to have my voice recorded and transcribed for ComCare intake.</span></label>
         <button id="continue" class="primary" disabled>Continue</button>
       </section>
 
       <section id="record-panel" class="panel hidden">
         <div id="timer" class="timer">00:00</div>
-        <p><strong>Please introduce yourself first, then tell us what happened and what help you need.</strong></p>
+        <button id="play-recording-instructions" class="text-button prompt-audio hidden" type="button">Play instructions</button>
+        <p><strong id="record-heading">Please introduce yourself first, then tell us what happened and what help you need.</strong></p>
         <div class="prompt-card">
-          <span>To help the officer understand your situation, please mention:</span>
-          <ul>
+          <span id="prompt-intro">To help the officer understand your situation, please mention:</span>
+          <ul id="prompt-list">
             <li>Your name, age and citizenship or residency status</li>
             <li>Your work situation and monthly household income</li>
             <li>Who lives with you, including the number and ages of your children</li>
             <li>Housing, medical, caregiving, school or other major expenses</li>
             <li>What changed recently and what help you need now</li>
           </ul>
-          <small>You do not need to state your NRIC. Speak naturally and include only what you are comfortable sharing.</small>
+          <small id="prompt-small">You do not need to state your NRIC. Speak naturally and include only what you are comfortable sharing.</small>
         </div>
         <button id="record" class="record" aria-label="Start recording"><span></span></button>
         <audio id="recording-preview" class="recording-preview hidden" controls></audio>
@@ -51,10 +65,10 @@
       </section>
 
       <section id="contact-panel" class="panel hidden">
-        <p class="eyebrow">Contact details</p>
-        <h2>How can an officer reach you?</h2>
-        <div class="notice">Your phone number is collected so a Social Service Officer can contact you after reviewing your case.</div>
-        <label class="field-label" for="phone">Singapore phone number</label>
+        <p id="contact-kicker" class="eyebrow">Contact details</p>
+        <h2 id="contact-title">How can an officer reach you?</h2>
+        <div id="contact-notice" class="notice">Your phone number is collected so a Social Service Officer can contact you after reviewing your case.</div>
+        <label id="phone-label" class="field-label" for="phone">Singapore phone number</label>
         <input id="phone" class="text-input" type="tel" inputmode="tel" autocomplete="tel" placeholder="e.g. 9123 4567" aria-describedby="phone-help" required>
         <p id="phone-help" class="field-help">Enter an 8-digit number, with or without +65.</p>
         <button id="submit" class="primary">Send for review</button>
@@ -63,10 +77,10 @@
       </section>
 
       <section id="done-panel" class="panel hidden">
-        <div class="success">✓</div><h2>Recording received</h2>
-        <p>An officer can review it on the next working day. If your safety is at risk now, call <strong>999</strong> or <strong>1-767</strong>.</p>
+        <div class="success">✓</div><h2 id="done-title">Recording received</h2>
+        <p id="done-message">An officer can review it on the next working day. If your safety is at risk now, call <strong>999</strong> or <strong>1-767</strong>.</p>
       </section>
-      <p class="emergency">Immediate danger? Call <a href="tel:999">999</a>. Mental health crisis? Call <a href="tel:1767">1-767</a>.</p>
+      <p id="emergency" class="emergency">Immediate danger? Call <a href="tel:999">999</a>. Mental health crisis? Call <a href="tel:1767">1-767</a>.</p>
     </section>
   </main>
   <aside class="demo-tools" aria-label="Demo controls">

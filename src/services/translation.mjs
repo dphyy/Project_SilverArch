@@ -10,7 +10,7 @@ export function timestampedSentences(transcript = {}) {
   let current = [];
   for (const word of words) {
     current.push(word);
-    if (/[.!?][”"']?$/.test(word.text)) {
+    if (/[.!?。！？][”"']?$/.test(word.text)) {
       sentences.push(toSentence(current, sentences.length));
       current = [];
     }
@@ -63,42 +63,36 @@ export class MeralionTranslator {
   }
 }
 
-export class ElevenLabsDubbingTranslator {
-  name = "elevenlabs-dubbing";
-  constructor({ apiKey = process.env.ELEVENLABS_API_KEY, enabled = process.env.ELEVENLABS_DUBBING_ENABLED === "true", pollIntervalMs = Number(process.env.TRANSLATION_POLL_INTERVAL_MS || 2_000), timeoutMs = Number(process.env.TRANSLATION_TIMEOUT_MS || 180_000), fetchImpl = globalThis.fetch } = {}) {
-    this.apiKey = apiKey; this.enabled = enabled; this.pollIntervalMs = pollIntervalMs; this.timeoutMs = timeoutMs; this.fetch = fetchImpl;
+export class GoogleTextTranslator {
+  name = "google-translate";
+  constructor({ apiKey = process.env.GOOGLE_TRANSLATE_API_KEY, enabled = process.env.GOOGLE_TRANSLATE_ENABLED !== "false", targetLanguage = process.env.GOOGLE_TRANSLATE_TARGET_LANG || "en", timeoutMs = Number(process.env.GOOGLE_TRANSLATE_TIMEOUT_MS || 30_000), fetchImpl = globalThis.fetch } = {}) {
+    this.apiKey = apiKey; this.enabled = enabled; this.targetLanguage = targetLanguage; this.timeoutMs = timeoutMs; this.fetch = fetchImpl;
   }
-  async translate(_sentences, { buffer, mimeType = "audio/webm" }) {
-    if (!this.apiKey || !this.enabled) throw new Error("ElevenLabs Dubbing is not configured");
-    const form = new FormData();
-    form.append("target_lang", process.env.ELEVENLABS_DUBBING_TARGET_LANG || "en");
-    form.append("source_lang", "auto");
-    form.append("name", `SilverArch ${Date.now()}`);
-    form.append("file", new Blob([buffer], { type: mimeType }), mimeType.includes("ogg") ? "recording.ogg" : "recording.webm");
-    const createdResponse = await this.fetch("https://api.elevenlabs.io/v1/dubbing", { method: "POST", headers: { "xi-api-key": this.apiKey }, body: form });
-    if (!createdResponse.ok) throw new Error(`ElevenLabs Dubbing creation failed (${createdResponse.status}): ${(await createdResponse.text()).slice(0, 240)}`);
-    const { dubbing_id: dubbingId } = await createdResponse.json();
-    const deadline = Date.now() + this.timeoutMs;
-    while (Date.now() < deadline) {
-      const statusResponse = await this.fetch(`https://api.elevenlabs.io/v1/dubbing/${dubbingId}`, { headers: { "xi-api-key": this.apiKey } });
-      if (!statusResponse.ok) throw new Error(`ElevenLabs Dubbing status failed (${statusResponse.status})`);
-      const status = await statusResponse.json();
-      if (status.status === "failed") throw new Error(status.error || "ElevenLabs Dubbing failed");
-      if (status.status === "dubbed") break;
-      await new Promise((resolve) => setTimeout(resolve, this.pollIntervalMs));
-    }
-    if (Date.now() >= deadline) throw new Error("ElevenLabs Dubbing timed out");
-    const transcriptResponse = await this.fetch(`https://api.elevenlabs.io/v1/dubbing/${dubbingId}/transcripts/en/format/json`, { headers: { "xi-api-key": this.apiKey } });
-    if (!transcriptResponse.ok) throw new Error(`ElevenLabs translated transcript failed (${transcriptResponse.status})`);
-    const body = await transcriptResponse.json();
-    const utterances = body.json?.utterances || body.utterances || [];
-    const sentences = utterances.map((utterance, index) => ({ id: `sentence-${index}`, text: utterance.text, start: Number(utterance.start_s) || 0, end: Number(utterance.end_s) || 0, sourceStart: Number(utterance.start_s) || 0, sourceEnd: Number(utterance.end_s) || 0 }));
-    const words = utterances.flatMap((utterance) => (utterance.words || []).map((word) => ({ text: word.text, start: Number(word.start_s) || 0, end: Number(word.end_s) || 0 })));
-    return { provider: this.name, dubbingId, text: sentences.map((sentence) => sentence.text).join(" "), sentences, words };
+  async translate(sentences) {
+    if (!this.apiKey || !this.enabled) throw new Error("Google Cloud Translation is not configured");
+    const response = await this.fetch(`https://translation.googleapis.com/language/translate/v2?key=${encodeURIComponent(this.apiKey)}`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ q: sentences.map((sentence) => sentence.text), target: this.targetLanguage, format: "text" }),
+      signal: AbortSignal.timeout(this.timeoutMs)
+    });
+    if (!response.ok) throw new Error(`Google Cloud Translation failed (${response.status}): ${(await response.text()).slice(0, 240)}`);
+    const body = await response.json();
+    const translations = body.data?.translations || [];
+    if (translations.length !== sentences.length) throw new Error("Google Cloud Translation did not preserve sentence count");
+    const translated = sentences.map((source, index) => ({
+      ...source,
+      text: translations[index].translatedText || "",
+      sourceText: source.text,
+      sourceStart: source.start,
+      sourceEnd: source.end,
+      detectedSourceLanguage: translations[index].detectedSourceLanguage || null
+    }));
+    return { provider: this.name, text: translated.map((sentence) => sentence.text).join(" "), sentences: translated, words: [] };
   }
 }
 
-export async function translateWithFallback(transcript, audio, { primary = new MeralionTranslator(), fallback = new ElevenLabsDubbingTranslator() } = {}) {
+export async function translateWithFallback(transcript, audio, { primary = new MeralionTranslator(), fallback = new GoogleTextTranslator() } = {}) {
   if (!requiresEnglishTranslation(transcript)) return { status: "not-required", sourceLanguage: transcript.languageCode || "eng" };
   const sentences = timestampedSentences(transcript);
   try {
@@ -112,10 +106,7 @@ export async function translateWithFallback(transcript, audio, { primary = new M
   }
 }
 
-export async function probeElevenLabsDubbing({ apiKey = process.env.ELEVENLABS_API_KEY, enabled = process.env.ELEVENLABS_DUBBING_ENABLED === "true", fetchImpl = globalThis.fetch } = {}) {
-  if (!apiKey || !enabled) return "unavailable";
-  try {
-    const response = await fetchImpl("https://api.elevenlabs.io/v1/dubbing?page_size=1", { headers: { "xi-api-key": apiKey }, signal: AbortSignal.timeout(5_000) });
-    return response.ok ? "verified" : "configured-unverified";
-  } catch { return "configured-unverified"; }
+export function googleTranslateCapability({ apiKey = process.env.GOOGLE_TRANSLATE_API_KEY, enabled = process.env.GOOGLE_TRANSLATE_ENABLED !== "false" } = {}) {
+  if (!enabled) return "disabled";
+  return apiKey ? "configured" : "unavailable";
 }

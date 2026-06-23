@@ -59,7 +59,7 @@ export async function renderReportDocx(report) {
   children.push(heading("Appendix A - Verified transcript"), body(report.transcripts.verified));
   if (report.transcripts.english && report.transcripts.english !== report.transcripts.verified) children.push(heading("Appendix B - English translation"), body(report.transcripts.english));
   if (report.transcripts.original !== report.transcripts.verified) children.push(heading("Appendix C - Original ASR transcript"), body(report.transcripts.original));
-  children.push(heading("Provider attribution"), body(`ASR: ${report.metadata.asrEngine}. Translation: ${report.metadata.translationStatus}${report.metadata.translationProvider ? ` (${report.metadata.translationProvider})` : ""}.`), heading("Officer declaration"), body(report.declaration.statement));
+  children.push(heading("Provider attribution"), body(`ASR: ${report.metadata.asrEngine}. Translation: ${report.metadata.translationStatus}${report.metadata.translationProvider ? ` (${report.metadata.translationProvider})` : ""}. Report draft: ${report.metadata.reportDraftProvider || "manual/local"}${report.metadata.reportDraftFallbackReason ? ` after fallback: ${report.metadata.reportDraftFallbackReason}` : ""}.`), heading("Officer declaration"), body(report.declaration.statement));
 
   const doc = new Document({
     creator: "", lastModifiedBy: "", title: "SilverArch Supporting Case Report", subject: "Supporting case report for SSO review",
@@ -101,7 +101,7 @@ export async function renderReportPdf(report) {
     h1("Appendix A - Verified transcript"); para(report.transcripts.verified);
     if (report.transcripts.english && report.transcripts.english !== report.transcripts.verified) { h1("Appendix B - English translation"); para(report.transcripts.english); }
     if (report.transcripts.original !== report.transcripts.verified) { h1("Appendix C - Original ASR transcript"); para(report.transcripts.original); }
-    h1("Provider attribution"); para(`ASR: ${report.metadata.asrEngine}. Translation: ${report.metadata.translationStatus}${report.metadata.translationProvider ? ` (${report.metadata.translationProvider})` : ""}.`);
+    h1("Provider attribution"); para(`ASR: ${report.metadata.asrEngine}. Translation: ${report.metadata.translationStatus}${report.metadata.translationProvider ? ` (${report.metadata.translationProvider})` : ""}. Report draft: ${report.metadata.reportDraftProvider || "manual/local"}${report.metadata.reportDraftFallbackReason ? ` after fallback: ${report.metadata.reportDraftFallbackReason}` : ""}.`);
     h1("Officer declaration"); para(report.declaration.statement);
     const range = doc.bufferedPageRange(); for (let i = range.start; i < range.start + range.count; i += 1) { doc.switchToPage(i); doc.font("Helvetica").fontSize(8).fillColor(`#${MUTED}`).text(`SilverArch case ${report.caseId.slice(0, 8)} | Version ${report.version} | Page ${i + 1} of ${range.count}`, 56.7, 768, { width: contentWidth, align: "right", lineBreak: false }); }
     doc.end();
