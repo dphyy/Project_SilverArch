@@ -1,10 +1,83 @@
-# SilverArch
+# 🏛️ SilverArch
 
-An after-hours ComCare voice-intake MVP with a real Singapore-time gate, explicit consent, browser audio capture, MERaLiON-first/ElevenLabs-fallback transcription, deterministic triage scaffolding, safety routing, and a human review queue.
+**After-hours voice intake for public and social services — with AI assistance, timestamped evidence, and human escalation kept firmly in the loop.**
 
-## Run
+SilverArch is an MVP/demo system for the challenge:
 
-Requires Node.js 20 or later. Install the local document-generation dependencies once:
+> **Public services that do not sleep — How might we build AI assistants that make public or social services easier to access, while preserving human escalation?**
+
+It simulates an after-hours ComCare-style intake flow where a citizen leaves a voice account, the system transcribes and analyses the call, and an officer reviews evidence-linked triage before generating an editable supporting report.
+
+SilverArch does **not** determine eligibility. It helps an officer understand, verify, and follow up.
+
+---
+
+## ✨ What it demonstrates
+
+### For citizens
+
+- Singapore-time hotline gate: live-hours redirect, after-hours recording.
+- Consent-first voice intake.
+- English, Mandarin Chinese, Malay and Tamil citizen interface.
+- Citizens may speak in the language or dialect they are most comfortable with, and may mix languages naturally in one call.
+- Browser read-aloud with an ear icon for page instructions.
+- Recording review and re-record before submission.
+- Required Singapore callback number collection for SSO follow-up.
+
+### For officers
+
+- Auto-seeded demo MP3 cases for repeatable video demos.
+- MERaLiON-first transcription with ElevenLabs Scribe fallback.
+- MERaLiON-first translation with Google Cloud Translation fallback.
+- AI-first evidence highlighting with exact quote/timestamp validation.
+- Clickable transcript evidence that replays audio from the source sentence.
+- Caller rundown, review flags, urgency/safeguarding signals and missing facts.
+- Scheme shortlist capped to top 3, including ComCare and AIC referral considerations.
+- “Review council” panel that separates scheme fit, safeguarding, missing information and referral opportunities.
+- Reanalyse audio button to rerun latest ASR, translation, evidence, triage and report-readiness logic.
+- Editable supporting report drafts with DOCX/PDF export.
+
+---
+
+## 🧭 Product principles
+
+SilverArch is intentionally built around these boundaries:
+
+1. **Human escalation stays central.** AI prepares evidence and questions; officers decide what to do.
+2. **Triage is not eligibility.** Scheme matches are referral/review considerations only.
+3. **Evidence must be traceable.** Highlights must map back to exact transcript words and audio timestamps.
+4. **Uncertainty must be visible.** Mixed-language gaps, missing facts, low confidence, urgent risk and PII review are shown separately.
+5. **No fabrication.** If ASR cannot transcribe foreign-language speech, SilverArch shows `[foreign language]` and flags it for review.
+
+---
+
+## 🧱 System at a glance
+
+```text
+Citizen web flow
+  ↓
+Local Node server
+  ↓
+ASR: MERaLiON → ElevenLabs
+  ↓
+Translation: MERaLiON → Google Translate
+  ↓
+Evidence: OpenAI exact-quote extraction → deterministic fallback/safety rules
+  ↓
+Triage, urgency, PII proposals, caller rundown
+  ↓
+Officer dashboard
+  ↓
+Editable report draft → finalized DOCX/PDF
+```
+
+The whole MVP runs as a local Node app. Runtime case data lives under `data/` and is suitable for fictional/demo data only.
+
+---
+
+## 🚀 Quick start
+
+Requires **Node.js 20+**.
 
 ```sh
 npm install
@@ -12,74 +85,137 @@ npm test
 npm run dev
 ```
 
-Open `http://localhost:3000`. Use the **2am · after hours** demo control to exercise recording, then open the Officer view. Four tracked MP3 demo calls from `demo/audio/` are also seeded automatically into the officer queue on startup.
+Open:
 
-## Configure providers
+- Citizen intake: `http://localhost:3000`
+- Officer dashboard: `http://localhost:3000/officer.html`
 
-Open `.env` and paste your key after the equals sign:
+On startup, the server auto-seeds four tracked MP3 demo calls from `demo/audio/` into the officer queue.
+
+---
+
+## 🔐 Provider configuration
+
+Create `.env` from `.env.example` and add the keys you want to use.
 
 ```dotenv
-ELEVENLABS_API_KEY=your_real_key_here
+MERALION_API_URL=
+MERALION_API_KEY=
+MERALION_TRANSLATION_MODEL=MERaLiON/MERaLiON-3-10B
+MERALION_TIMEOUT_MS=30000
+
+ELEVENLABS_API_KEY=
 ELEVENLABS_STT_MODEL=scribe_v2
-MERALION_API_URL=http://meralion.org:8010
-MERALION_API_KEY=your_meralion_key_here
-GOOGLE_TRANSLATE_API_KEY=your_google_translate_key_here
-OPENAI_API_KEY=optional_openai_report_fallback_key
+
+GOOGLE_TRANSLATE_API_KEY=
+GOOGLE_TRANSLATE_ENABLED=true
+GOOGLE_TRANSLATE_TARGET_LANG=en
+GOOGLE_TRANSLATE_TIMEOUT_MS=30000
+
+OPENAI_API_KEY=
+OPENAI_EVIDENCE_MODEL=gpt-4.1-mini
+OPENAI_REPORT_MODEL=gpt-5.4-mini
 ```
 
-Restart `npm run dev` after changing `.env`. The key is read only by the Node server; it is never sent to the browser. `.env` is ignored by Git, while `.env.example` documents the required variables safely.
+Restart `npm run dev` after changing `.env`.
 
-## Key features
+Secrets are read only by the server and are never exposed through `/api/status`; that endpoint returns safe capability states only.
 
-### Honest time gate
+---
 
-The server and client independently enforce ComCare's 7am–midnight Singapore hotline window. During operating hours, recording is blocked and the citizen is directed to the live hotline. The visible demo clock exercises both branches without changing production logic.
+## 🤖 Provider flow
 
-### Provider-independent transcription
+| Capability | Primary | Fallback | Notes |
+|---|---|---|---|
+| ASR | MERaLiON | ElevenLabs Scribe v2 | Preserves provider attribution and fallback reason. |
+| Translation | MERaLiON | Google Cloud Translation | Translates timestamped transcript sentences, not raw audio. |
+| Evidence highlighting | OpenAI | Deterministic rules | AI evidence must quote exact transcript text to become a highlight. |
+| Report drafting | MERaLiON | OpenAI | Draft remains editable before finalization. |
+| DOCX/PDF | Local libraries | None | Uses `docx` and `pdfkit`; no report rendering API. |
 
-`src/services/asr.mjs` always attempts the MERaLiON provider first. Only an error or timeout activates ElevenLabs Scribe v2. The normalized result stores provider attribution, fallback reason, detected language, word timestamps, and explainable low-confidence flags.
+If mixed-language audio is detected but ASR cannot transcribe a segment, the transcript keeps a visible `[foreign language]` placeholder and raises an officer review flag.
 
-Non-English testimony is translated to English through MERaLiON first, then Google Cloud Translation. Google translates timestamped transcript sentences rather than raw audio, so the dashboard preserves the original ASR timestamps while showing English underneath. Translation attribution or failure is recorded without exposing keys.
+---
 
-### Safety and privacy signals
+## 🖥️ Demo flow
 
-Urgency screening is a separate, priority pass and immediately shows the citizen an existing 24-hour resource when risk language is detected. NRIC/FIN and phone matches are proposals only; officers must verify them.
+1. Run `npm run dev`.
+2. Open the officer dashboard.
+3. Four demo audio cases should appear automatically:
+   - English + Chinese mixed-language, showing that callers do not need to stick to one language or dialect
+   - English with AIC referral signals
+   - Malay long-form testimony
+   - Tamil safeguarding-risk testimony
+4. Open a case and inspect:
+   - selected queue card state;
+   - audio playback;
+   - highlighted transcript evidence;
+   - review flags;
+   - caller rundown;
+   - shortlist and AIC referrals;
+   - callback script;
+   - report readiness checklist.
+5. Use **Reanalyse audio** after code changes to refresh an existing case without re-recording.
+6. Complete officer checks and generate an editable supporting report.
 
-### Conservative scheme triage
+---
 
-The triage layer shortlists up to three structured schemes. It keeps missing hard-ceiling facts explicit, treats hardship as appeal context, and never represents its output as an eligibility decision. The current text rules are deterministic MVP scaffolding, not a validated social-service assessment model.
+## 📁 Repository map
 
-### Evidence-linked officer review
+```text
+.
+├── public/          Browser UI for citizen, officer and report pages
+├── src/domain/      Deterministic business/domain logic
+├── src/services/    External provider adapters and document rendering
+├── data/            Runtime local demo storage and scheme catalogue
+├── demo/audio/      Tracked MP3 demo cases
+├── test/            Node test suite
+├── scripts/         Utility scripts
+└── server.mjs       Local HTTP server and API routes
+```
 
-The dashboard sorts urgent and waiting cases, displays independent review reasons, and makes timestamped transcript words clickable so an officer can jump to the supporting audio. Escalate and keep-in-review decisions persist and append an audit event.
+Folder-level READMEs provide more detail inside each major area.
 
-Important phrases are marked by category—personal details, income/employment/housing, health/wellbeing, and family/care/education. Every marker retains its source word range and audio timestamps. A caller rundown beneath the transcript quotes the extracted characteristics and lists core details the officer still needs to ask for.
+---
 
-The citizen reviews or re-records audio before entering a required Singapore callback number. Officers see the full number only in the selected case. They can edit the verified transcript, summary, facts, shortlist reasoning and notes; confirm or reject PII proposals; and persist a review decision with an audit entry.
+## 🧪 Testing
 
-The officer dashboard includes a **Reanalyse audio** action for each recorded case. It reprocesses the stored audio through the latest ASR, translation, evidence, urgency, PII and triage pipeline without requiring a new recording.
+```sh
+npm test
+```
 
-Four tracked demo MP3 recordings auto-seed as realistic review cases. They are copied from `demo/audio/` into ignored runtime storage under `data/audio/`, then processed like citizen-submitted recordings.
+The test suite covers:
 
-### Editable supporting reports
+- time gate behavior;
+- ASR provider fallback;
+- translation fallback;
+- evidence extraction and timestamp mapping;
+- mixed-language placeholder handling;
+- urgency categories;
+- triage constraints;
+- report readiness;
+- report evidence deduplication;
+- DOCX/PDF generation.
 
-The citizen dashboard supports English, Mandarin Chinese, Malay and Tamil. Callers choose a language before consent; translated text appears throughout the web-call flow, and the ear-icon read-aloud uses browser speech synthesis for accessible page instructions.
+---
 
-**Generate report** replaces the former Accept action. It remains disabled until the officer has entered their name, designation and SSO; reviewed the available audio/transcript/evidence; resolved PII proposals; acknowledged review flags where present; and signed the declaration. SilverArch then drafts the formal report sections automatically from the transcript, evidence, caller profile, shortlist and flags. A visible checklist identifies every missing item, and the server independently revalidates the gate.
+## ⚠️ Safety and deployment boundary
 
-Generated reports open on a dedicated editable page with the case audio and timestamped evidence alongside the draft. MERaLiON is used first for report drafting; OpenAI is used only as fallback when configured. Draft revisions autosave explicitly to `data/reports/`, finalized versions are immutable, and later edits create a new amended version. Finalized reports download as genuine A4 DOCX or PDF files generated locally with `docx` and `pdfkit`.
+SilverArch is a local MVP/demo, not a production case system.
 
-The output is a **SilverArch Supporting Case Report for SSO Review**, not a government-issued form. It contains no crest or claim of agency endorsement and continues to separate triage support from eligibility decisions.
+- Local `data/` storage is not production-secure.
+- Demo phone numbers and cases are fictional.
+- No real telephony, authentication, agency integration or production case writes are included.
+- Automatic PII redaction proposals require officer confirmation.
+- Scheme triage needs domain validation before any real-world pilot.
+- Urgent-risk guidance supports escalation; it does not replace emergency services or professional judgement.
 
-## Safety boundary
+---
 
-- Triage rules are intentionally conservative and need validation by ComCare-domain practitioners before any real-world use.
-- Cases and audio are stored locally under `data/` and are not production-secure storage.
-- SilverArch supports triage, not eligibility. Real telephony, multi-agency integrations, production case writes, authentication and production storage are outside this MVP.
+## 🛣️ Recommended next steps
 
-## Next production steps
-
-1. Validate the hosted MERaLiON request/response contract, Google Cloud Translation key and optional OpenAI report fallback with non-sensitive recordings.
-2. Run domain review of every hard ceiling, flexible criterion and safety phrase.
-3. Add authenticated officer access, encrypted production storage and retention controls.
-4. Conduct accessibility, multilingual and noisy-audio evaluation before any real caller pilot.
+1. Validate MERaLiON ASR/translation behavior on non-sensitive multilingual recordings.
+2. Review all scheme records and hard/flexible criteria with domain practitioners.
+3. Add authentication, encrypted storage, retention controls and audit access controls.
+4. Run accessibility and multilingual usability testing.
+5. Integrate real telephony only after governance, consent, security and escalation processes are defined.
