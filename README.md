@@ -10,6 +10,8 @@ It simulates an after-hours ComCare-style intake flow where a citizen leaves a v
 
 SilverArch does **not** determine eligibility. It helps an officer understand, verify, and follow up.
 
+Watch the [demo!](https://youtu.be/6XUDFWJnj2Q)
+
 ---
 
 ## ✨ What it demonstrates
