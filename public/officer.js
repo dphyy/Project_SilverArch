@@ -62,12 +62,14 @@ function renderDetail(id) {
   const readiness = item.reportReadiness || { ready: false, missing: [{ label: "Save the officer review to check report readiness" }] };
   const reportAction = item.reportSummary ? `<a class="primary button" href="/report.html?case=${encodeURIComponent(item.id)}">${item.reportSummary.status === "finalized" ? "View finalized report" : "Continue report draft"}</a>` : `<button id="generate-report" class="primary" ${readiness.ready ? "" : "disabled"}>Generate report</button>`;
   const callback = callbackPlan(item, evidence, profile, shortlist, flags);
+  const council = reviewCouncil(item, shortlist, profile, flags);
   $("#case-detail").className = "detail";
   $("#case-detail").innerHTML = `
     <div class="detail-head"><div><p class="eyebrow">Case ${item.id.slice(0, 8)}</p><h2>Citizen testimony</h2></div><span class="badge">${escapeHtml(item.status)}</span></div>
     ${item.audioUrl ? `<audio id="case-audio" preload="metadata" src="${item.audioUrl}"></audio><div class="audio-player"><button id="audio-toggle" class="audio-toggle" aria-label="Play recording">▶</button><span id="audio-current">00:00</span><input id="audio-slider" type="range" min="0" max="${duration}" step="0.01" value="0" aria-label="Recording position"><span>${formatTime(duration)}</span></div>` : '<div class="pending">Fixed transcript fixture — no synthetic citizen audio is attached.</div>'}
     <section class="contact-card"><div><span>SSO callback number</span><strong>${escapeHtml(item.contact?.phone || "Not collected")}</strong></div><div><span>Intake language</span><strong>${escapeHtml(languageLabel(item.intakeLanguage))}</strong><small>${escapeHtml(item.intakeMode || "web intake")}</small></div>${item.contact?.phone ? `<a class="secondary button" href="tel:${escapeHtml(item.contact.phone)}">Call citizen</a>` : ""}</section>
     <section><h3>Review flags</h3><div class="flag-list">${flags.length ? flags.map((flag) => `<div class="flag ${flag.kind}">${escapeHtml(flag.text)}</div>`).join("") : '<p class="muted">No flags raised.</p>'}</div></section>
+    <section class="review-council"><div class="section-head"><h3>Review council</h3><span class="engine">${council.confidenceScore}% confidence</span></div>${council.humanEscalationRequired ? `<div class="escalation-banner">Human escalation required: ${escapeHtml(council.triggers.join(" · "))}</div>` : '<p class="muted">No council escalation trigger detected. Officer judgement still applies.</p>'}<div class="council-grid">${council.perspectives.map((perspective) => `<article class="council-card ${escapeHtml(perspective.status)}"><span>${escapeHtml(perspective.title)}</span><p>${escapeHtml(perspective.summary)}</p></article>`).join("")}</div></section>
     <section><div class="section-head"><h3>${escapeHtml(primaryTranscript.title)}</h3><span class="engine">${escapeHtml(primaryTranscript.engine)}</span></div><div class="evidence-legend"><span class="dot identity"></span>Personal details <span class="dot financial"></span>Financial <span class="dot wellbeing"></span>Health / wellbeing <span class="dot family"></span>Family / care</div><div class="transcript">${transcriptHtml}</div><p class="audit">Exact word times remain available. Highlighted evidence replays from the beginning of its sentence.${item.transcript.fallbackReason ? ` Fallback reason: ${escapeHtml(item.transcript.fallbackReason)}` : ""}</p>
       ${primaryTranscript.isTranslated ? `<div class="translated-block"><div class="section-head"><h3>Original transcript</h3><span class="engine">ASR: ${escapeHtml(item.transcript.asrEngine || "failed")}${item.transcript.languageCode ? ` · ${escapeHtml(item.transcript.languageCode)}` : ""}</span></div><div class="transcript">${originalHtml}</div></div>` : item.translation?.status === "unavailable" ? '<div class="flag confidence">English translation unavailable — language-assisted review required.</div>' : ""}
       <div class="caller-rundown"><p class="eyebrow">Quick caller rundown</p><p>${escapeHtml(profile.summary)}</p><div class="characteristics">${profile.characteristics?.length ? profile.characteristics.map((fact) => `<button class="characteristic seek-audio evidence-${fact.category}" data-start="${Number(fact.sentenceStart ?? fact.start) || 0}"><span>${escapeHtml(fact.label)}${fact.requiresVerification ? " · verify" : ""}</span><strong>“${escapeHtml(fact.value)}”</strong><small>Phrase at ${Number(fact.start || 0).toFixed(1)}s · replay sentence</small></button>`).join("") : '<p class="muted">No key characteristics were automatically identified.</p>'}</div>${profile.missingCoreDetails?.length ? `<div class="missing-details"><strong>Ask next:</strong> ${escapeHtml(profile.missingCoreDetails.join(", "))}</div>` : ""}</div>
@@ -97,6 +99,8 @@ function evidenceDisplayTranscript(item) {
 
 function callbackPlan(item, evidence = [], profile = {}, shortlist = [], flags = []) {
   const contact = item.contact?.phone || "No callback number";
+  const aicShortlist = shortlist.filter((scheme) => String(scheme.schemeId || "").startsWith("aic_"));
+  const hasAicSignals = aicShortlist.length || evidence.some((item) => /caregiv|disab|wheelchair|mobility|assistive|adl|bathe|shower|dress|toilet|feed|frail|elderly|senior/i.test(`${item.text} ${item.label}`));
   const checklist = uniqueItems([
     item.contact?.phone ? `Call ${item.contact.phone} and confirm it is a safe number to use.` : "Obtain a reachable phone number before follow-up.",
     "Confirm the caller's name and preferred language for the callback.",
@@ -104,6 +108,7 @@ function callbackPlan(item, evidence = [], profile = {}, shortlist = [], flags =
     ...(item.urgency?.urgent ? [`If risk is still immediate, redirect to ${item.urgency.resource || "emergency support"} before continuing triage.`] : []),
     ...(item.piiProposals || []).filter((proposal) => proposal.status === "proposed").map((proposal) => `Verify whether the ${proposal.type} was intentionally provided, then confirm or reject the redaction proposal.`),
     ...(profile.missingCoreDetails || []).map((detail) => `Clarify ${plainDetail(detail)}.`),
+    ...(hasAicSignals ? ["Check whether AIC Link or another AIC referral pathway should be considered after SSO review."] : []),
     ...shortlist.flatMap((scheme) => (scheme.insufficientInformation || []).map((detail) => `Clarify for ${scheme.name}: ${detail}.`)),
     ...evidence.filter((item) => item.requiresVerification).map((item) => `Verify the statement: "${item.text}".`)
   ]);
@@ -111,6 +116,13 @@ function callbackPlan(item, evidence = [], profile = {}, shortlist = [], flags =
     "Can I confirm your full name and whether this is a safe time and number to speak?",
     `Would you prefer to continue in ${languageLabel(item.intakeLanguage)} or another language?`,
     ...(profile.missingCoreDetails || []).map((detail) => questionForDetail(detail)),
+    ...(hasAicSignals ? [
+      "Does the person needing care require help with activities of daily living, such as bathing, dressing, toileting, feeding or transferring?",
+      "Are any mobility or assistive devices needed, such as a wheelchair, walking aid, commode or hospital bed?",
+      "Who is the main caregiver, and would caregiver training or respite support be useful?",
+      "Has any doctor, therapist or assessor documented the disability, mobility or long-term care need?",
+      "Would you be comfortable if the officer explores whether an AIC Link referral is suitable?"
+    ] : []),
     ...shortlist.flatMap((scheme) => (scheme.insufficientInformation || []).map((detail) => `For ${scheme.name}, can you clarify ${detail.replace(/\s+not stated$/i, "")}?`)),
     ...evidence.filter((item) => item.requiresVerification).map((item) => `You mentioned "${item.text}". Can I confirm that detail is accurate?`),
     ...(item.urgency?.urgent ? ["Are you safe right now, and do you need emergency assistance before we continue?"] : []),
@@ -124,6 +136,42 @@ function callbackPlan(item, evidence = [], profile = {}, shortlist = [], flags =
     `At the end, I will summarize what I understood and explain that an officer will review the information.`
   ];
   return { contact, checklist, questions, script };
+}
+
+function reviewCouncil(item, shortlist = [], profile = {}, flags = []) {
+  const unresolvedPii = (item.piiProposals || []).filter((proposal) => proposal.status === "proposed").length;
+  const missingCore = profile.missingCoreDetails || [];
+  const schemeMissing = shortlist.flatMap((scheme) => scheme.insufficientInformation || []);
+  const reviewReasons = [...(item.reviewReasons || []), ...(item.transcript?.confidenceFlags || [])].filter(Boolean);
+  const aicReferrals = shortlist.filter((scheme) => String(scheme.schemeId || "").startsWith("aic_"));
+  const translationUncertainty = ["pending", "unavailable", "failed"].includes(item.translation?.status);
+  const majorMissing = [...new Set([...missingCore, ...schemeMissing])];
+  const triggers = [
+    ...(item.urgency?.urgent ? ["urgent or safeguarding risk"] : []),
+    ...(flags.length || reviewReasons.length ? ["review or confidence flags"] : []),
+    ...(unresolvedPii ? ["unresolved PII"] : []),
+    ...(translationUncertainty ? ["translation uncertainty"] : []),
+    ...(majorMissing.length >= 2 ? ["major missing facts"] : [])
+  ];
+  const confidenceScore = Math.max(0, 100 - [
+    item.urgency?.urgent ? 25 : 0,
+    flags.length || reviewReasons.length ? 15 : 0,
+    unresolvedPii ? 20 : 0,
+    translationUncertainty ? 10 : 0,
+    Math.min(20, majorMissing.length * 5),
+    shortlist.length ? 0 : 10
+  ].reduce((sum, value) => sum + value, 0));
+  return {
+    humanEscalationRequired: Boolean(triggers.length),
+    triggers,
+    confidenceScore,
+    perspectives: [
+      { title: "Scheme fit", status: shortlist.length ? "review" : "attention", summary: shortlist.length ? `${shortlist.length} triage option${shortlist.length === 1 ? "" : "s"} found. Keep as officer consideration only.` : "No reliable scheme shortlist was produced." },
+      { title: "Safeguarding / urgency", status: item.urgency?.urgent ? "urgent" : "clear", summary: item.urgency?.urgent ? `${item.urgency.reason || "Urgent language detected"}; consider immediate escalation.` : "No immediate safeguarding trigger detected by the screen." },
+      { title: "Missing information", status: majorMissing.length ? "attention" : "clear", summary: majorMissing.length ? `Clarify: ${majorMissing.slice(0, 6).join("; ")}${majorMissing.length > 6 ? "; and other items" : ""}.` : "Core callback facts look sufficient for first review." },
+      { title: "Referral opportunities", status: aicReferrals.length ? "review" : "neutral", summary: aicReferrals.length ? `AIC referral considerations: ${aicReferrals.map((scheme) => scheme.name).join("; ")}.` : "No AIC referral option was shortlisted from current evidence." }
+    ]
+  };
 }
 
 function questionForDetail(detail) {

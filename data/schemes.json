@@ -95,5 +95,59 @@
     "summary": "Goal-based, coordinated support for families facing severe hardship.",
     "hard_ceilings": [{ "field": "citizenship", "rule": "Family unit must include at least one Singapore Citizen." }],
     "flexible_criteria": [{ "field": "family_goals", "benchmark": "Case-by-case", "note": "Support is coordinated around qualitative milestones with a Family Coach." }]
+  },
+  {
+    "scheme_id": "aic_hcg",
+    "name": "AIC Home Caregiving Grant",
+    "official_source_url": "https://www.aic.sg/Financial-Assistance/Home-Caregiving-Grant",
+    "source_verified_at": "2026-06-24",
+    "summary": "Monthly cash support that may help defray caregiving costs for people with moderate to severe disabilities who need assistance with activities of daily living.",
+    "hard_ceilings": [
+      { "field": "care_needs", "rule": "Care recipient should have moderate to severe disability and require help with activities of daily living; officer should verify latest AIC criteria." }
+    ],
+    "flexible_criteria": [
+      { "field": "means_test", "benchmark": "AIC means-tested", "note": "Use as a referral consideration only; AIC or the relevant assessor confirms eligibility." },
+      { "field": "caregiving_burden", "benchmark": "Case-by-case", "note": "Caregiver strain, employment interruption and household hardship may support referral discussion." }
+    ]
+  },
+  {
+    "scheme_id": "aic_smf_devices",
+    "name": "AIC Seniors' Mobility and Enabling Fund — Mobility and Assistive Devices",
+    "official_source_url": "https://www.aic.sg/Financial-Assistance/Seniors-Mobility-and-Enabling-Fund---Mobility-and-Assistive-Devices",
+    "source_verified_at": "2026-06-24",
+    "summary": "Subsidies that may support seniors who need mobility or assistive devices such as wheelchairs, walking aids or other approved equipment.",
+    "hard_ceilings": [
+      { "field": "senior_or_device_need", "rule": "Referral relevance depends on senior status, assessed device need and latest AIC criteria." }
+    ],
+    "flexible_criteria": [
+      { "field": "mobility_need", "benchmark": "Assessed need", "note": "Mobility difficulty, falls risk or stated need for assistive devices should prompt officer verification." },
+      { "field": "means_test", "benchmark": "AIC means-tested", "note": "Use as a referral consideration only; do not treat as an eligibility finding." }
+    ]
+  },
+  {
+    "scheme_id": "aic_ctg",
+    "name": "AIC Caregivers Training Grant",
+    "official_source_url": "https://www.aic.sg/Financial-Assistance/Caregivers-Training-Grant",
+    "source_verified_at": "2026-06-24",
+    "summary": "Training subsidy that may help caregivers attend approved courses to better support care recipients.",
+    "hard_ceilings": [
+      { "field": "approved_training", "rule": "Training support depends on an eligible caregiver, care recipient and approved course; officer should verify with AIC." }
+    ],
+    "flexible_criteria": [
+      { "field": "caregiver_training_need", "benchmark": "Case-by-case", "note": "Caregiving strain, unfamiliar care tasks or need for skills training may support referral." }
+    ]
+  },
+  {
+    "scheme_id": "aic_elderfund",
+    "name": "AIC ElderFund",
+    "official_source_url": "https://www.aic.sg/Financial-Assistance/ElderFund",
+    "source_verified_at": "2026-06-24",
+    "summary": "Disability assistance that may support lower-income Singapore Citizens with severe disability who need long-term care support.",
+    "hard_ceilings": [
+      { "field": "severe_disability", "rule": "Referral relevance depends on severe disability, citizenship and latest AIC criteria; officer should verify through proper assessment channels." }
+    ],
+    "flexible_criteria": [
+      { "field": "long_term_care_need", "benchmark": "Case-by-case", "note": "Severe ADL limitations, long-term care needs or low support should trigger referral consideration." }
+    ]
   }
 ]

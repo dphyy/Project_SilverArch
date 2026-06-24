@@ -57,6 +57,7 @@ export function buildReportDraft(caseItem, version = 1, now = new Date().toISOSt
     facts: factReviews,
     urgency: caseItem.urgency || { urgent: false },
     reviewReasons: [...(caseItem.reviewReasons || [])],
+    reviewCouncil: buildReviewCouncil(caseItem),
     schemes: (caseItem.triage?.shortlist || []).map((scheme) => ({ schemeId: scheme.schemeId, name: scheme.name, softScore: scheme.softScore, reasoning: generatedSchemes.get(scheme.schemeId) || scheme.officerReasoning || scheme.reasoning, appealRelevant: scheme.appealRelevant || [], insufficientInformation: scheme.insufficientInformation || [], evidenceRefs: scheme.evidenceRefs || [] })),
     evidence: reportEvidence(caseItem),
     transcripts: { verified: redactTranscript(verifiedTranscript, caseItem.piiProposals), original: redactTranscript(originalTranscript, caseItem.piiProposals), english: caseItem.translation?.status === "ready" ? redactTranscript(caseItem.translation.english?.text || "", caseItem.piiProposals) : null },
@@ -112,7 +113,67 @@ export function buildReportMaterial(caseItem = {}) {
     schemes: (caseItem.triage?.shortlist || []).map(({ schemeId, name, reasoning, softScore, appealRelevant, insufficientInformation, evidenceRefs }) => ({ schemeId, name, reasoning, softScore, appealRelevant, insufficientInformation, evidenceRefs })),
     urgency: caseItem.urgency || {},
     reviewReasons: caseItem.reviewReasons || [],
+    reviewCouncil: buildReviewCouncil(caseItem),
     piiResolved: !(caseItem.piiProposals || []).some((proposal) => proposal.status === "proposed")
+  };
+}
+
+export function buildReviewCouncil(caseItem = {}) {
+  const shortlist = caseItem.triage?.shortlist || [];
+  const reviewReasons = [...(caseItem.reviewReasons || []), ...(caseItem.transcript?.confidenceFlags || [])].filter(Boolean);
+  const unresolvedPii = (caseItem.piiProposals || []).filter((proposal) => proposal.status === "proposed").length;
+  const missingCore = caseItem.callerProfile?.missingCoreDetails || [];
+  const schemeMissing = shortlist.flatMap((scheme) => scheme.insufficientInformation || []);
+  const aicReferrals = shortlist.filter((scheme) => String(scheme.schemeId || "").startsWith("aic_"));
+  const translationStatus = caseItem.translation?.status || "not-required";
+  const translationUncertainty = ["pending", "unavailable", "failed"].includes(translationStatus);
+  const majorMissingFacts = [...new Set([...missingCore, ...schemeMissing])];
+  const humanEscalationRequired = Boolean(caseItem.urgency?.urgent || reviewReasons.length || unresolvedPii || translationUncertainty || majorMissingFacts.length >= 2);
+  const deductions = [
+    caseItem.urgency?.urgent ? 25 : 0,
+    reviewReasons.length ? 15 : 0,
+    unresolvedPii ? 20 : 0,
+    translationUncertainty ? 10 : 0,
+    Math.min(20, majorMissingFacts.length * 5),
+    shortlist.length ? 0 : 10
+  ];
+  const confidenceScore = Math.max(0, 100 - deductions.reduce((sum, value) => sum + value, 0));
+  return {
+    humanEscalationRequired,
+    confidenceScore,
+    triggers: [
+      ...(caseItem.urgency?.urgent ? ["Urgent or safeguarding risk"] : []),
+      ...(reviewReasons.length ? ["Low-confidence or review flags"] : []),
+      ...(unresolvedPii ? ["Unresolved PII proposals"] : []),
+      ...(translationUncertainty ? ["Translation uncertainty"] : []),
+      ...(majorMissingFacts.length >= 2 ? ["Major missing facts"] : [])
+    ],
+    perspectives: [
+      {
+        id: "scheme-fit",
+        title: "Scheme fit",
+        status: shortlist.length ? "review" : "attention",
+        summary: shortlist.length ? `${shortlist.length} triage option${shortlist.length === 1 ? "" : "s"} shortlisted for officer consideration. Confirm criteria before any application or referral.` : "No reliable scheme shortlist was produced; officer review is needed."
+      },
+      {
+        id: "safeguarding",
+        title: "Safeguarding / urgency",
+        status: caseItem.urgency?.urgent ? "urgent" : "clear",
+        summary: caseItem.urgency?.urgent ? `${caseItem.urgency.reason || "Urgent language detected"}; consider immediate escalation and relevant 24-hour resources.` : "No immediate safeguarding trigger was detected by the intake screen."
+      },
+      {
+        id: "missing-information",
+        title: "Missing information",
+        status: majorMissingFacts.length ? "attention" : "clear",
+        summary: majorMissingFacts.length ? `Clarify: ${majorMissingFacts.slice(0, 6).join("; ")}${majorMissingFacts.length > 6 ? "; and other items" : ""}.` : "Core intake facts appear sufficiently captured for an initial officer callback."
+      },
+      {
+        id: "referral-opportunities",
+        title: "Referral opportunities",
+        status: aicReferrals.length ? "review" : "neutral",
+        summary: aicReferrals.length ? `Consider cross-agency referral discussion for: ${aicReferrals.map((scheme) => scheme.name).join("; ")}.` : "No AIC referral option was shortlisted from the current evidence."
+      }
+    ]
   };
 }
 
@@ -139,6 +200,10 @@ export function reportTextLines(report) {
   for (const fact of Object.values(report.facts)) lines.push(`${fact.label}: ${fact.status === "unknown" ? `Unable to verify - ${fact.explanation}` : fact.value}`);
   lines.push("Officer assessment", report.sections.assessment, "Recommended follow-up", report.sections.recommendedFollowUp);
   if (report.sections.safeguardsResolution) lines.push("Safeguards and review flags", report.sections.safeguardsResolution);
+  if (report.reviewCouncil) {
+    lines.push("Review council", `Human escalation required: ${report.reviewCouncil.humanEscalationRequired ? "Yes" : "No"}`, `Confidence / readiness score: ${report.reviewCouncil.confidenceScore}/100`);
+    for (const perspective of report.reviewCouncil.perspectives || []) lines.push(`${perspective.title}: ${perspective.summary}`);
+  }
   lines.push("Schemes for consideration - triage support only");
   for (const scheme of report.schemes) lines.push(scheme.name, scheme.reasoning, ...scheme.appealRelevant.map((item) => `Appeal context: ${item}`), ...scheme.insufficientInformation.map((item) => `Unverified: ${item}`));
   lines.push("Evidence excerpts");

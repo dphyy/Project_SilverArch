@@ -3,6 +3,7 @@ const panels = ["#open-panel", "#language-panel", "#consent-panel", "#record-pan
 const SPEECH_LANG = { en: "en-SG", zh: "zh-CN", ms: "ms-MY", ta: "ta-IN" };
 const SPEECH_RATE = { en: 0.78, zh: 0.56, ms: 0.72, ta: 0.6 };
 const FALLBACK_MS_PER_TOKEN = { en: 430, zh: 660, ms: 460, ta: 520 };
+const LANGUAGE_SPEECH_LABELS = { en: "English", zh: "Mandarin Chinese", ms: "Malay", ta: "Tamil" };
 let gate;
 let recorder;
 let chunks = [];
@@ -108,7 +109,10 @@ function renderCopy() {
   setReadableText("#message", gate?.mode === "open" ? t.openLead : t.closedLead);
   setReadableText("#open-message", t.openMessage); setReadableText("#open-call", t.callHotline);
   setReadableText("#language-kicker", t.chooseKicker); setReadableText("#language-title", t.chooseTitle);
-  document.querySelectorAll("[data-language]").forEach((button) => setReadableNode(button, button.textContent.trim()));
+  document.querySelectorAll("[data-language]").forEach((button) => {
+    setReadableNode(button, button.textContent.trim());
+    button.dataset.speechText = LANGUAGE_SPEECH_LABELS[button.dataset.language] || button.textContent.trim();
+  });
   setReadableText("#consent-notice", stripHtml(t.consentNotice)); setReadableText("#consent-label", t.consentLabel); setReadableText("#continue", t.continue);
   setReadableText("#record-heading", t.recordHeading); setReadableText("#prompt-intro", t.promptIntro); $("#prompt-list").innerHTML = t.promptItems.map((item) => `<li data-read-text="${escapeHtml(item)}">${tokenizeHtml(item)}</li>`).join(""); setReadableText("#prompt-small", t.promptSmall);
   setReadableText("#record-again", t.recordAgain); setReadableText("#to-contact", t.continue); setReadableText("#record-status", recording ? t.review : t.tapStart);
@@ -252,7 +256,7 @@ function toggleReadAloud(button) {
   const tokens = [];
   const separator = language === "zh" ? "。" : ". ";
   for (const item of items) {
-    const chunk = item.dataset.readText.trim();
+    const chunk = (item.dataset.speechText || item.dataset.readText).trim();
     if (!chunk) continue;
     const localTokens = [...item.querySelectorAll("[data-read-token]")];
     localTokens.forEach((token) => {
@@ -304,7 +308,7 @@ function speakChunkQueue(button, chunks) {
 }
 
 function readableChunks(items, defaultLang = SPEECH_LANG[language] || SPEECH_LANG.en) {
-  return items.flatMap((item) => sentenceParts(item.dataset.readText)
+  return items.flatMap((item) => sentenceParts(item.dataset.speechText || item.dataset.readText)
     .map((text) => ({ text, element: item, parts: mixedLanguageParts(text, item.dataset.language ? SPEECH_LANG[item.dataset.language] || defaultLang : defaultLang) }))
     .filter((chunk) => chunk.text.trim()));
 }
@@ -331,7 +335,12 @@ function mixedLanguageParts(text = "", defaultLang = SPEECH_LANG[language] || SP
 }
 
 function speechText(text = "") {
-  return String(text).replace(/\b([A-Z]{2,})\b/g, (_match, acronym) => acronym.split("").join(" "));
+  return String(text)
+    .replace(/\b([A-Z]{2,})\b/g, (_match, acronym) => acronym.split("").join(" "))
+    .replace(/[“”"‘’]/g, "")
+    .replace(/[。！？!?;:,.，、]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
 function speakNextQueuedChunk(button) {
@@ -354,7 +363,7 @@ function speakNextQueuedChunk(button) {
   const lang = part.lang;
   const utterance = new SpeechSynthesisUtterance(speechText(text));
   utterance.lang = lang;
-  utterance.rate = lang.startsWith("en") ? 0.78 : 0.64;
+  utterance.rate = rateForSpeechLang(lang);
   utterance.pitch = 1;
   utterance.volume = 1;
   const voice = bestVoiceForLanguage(lang);
@@ -363,7 +372,7 @@ function speakNextQueuedChunk(button) {
   utterance.onend = () => {
     if (!speechState.queue || speechState.queue.stopped) return;
     speechState.queue.partIndex += 1;
-    window.setTimeout(() => speakNextQueuedChunk(button), lang.startsWith("en") ? 70 : 40);
+    window.setTimeout(() => speakNextQueuedChunk(button), lang.startsWith("en") ? 80 : 55);
   };
   utterance.onerror = () => {
     if (!speechState.queue || speechState.queue.stopped) return;
@@ -371,6 +380,14 @@ function speakNextQueuedChunk(button) {
     window.setTimeout(() => speakNextQueuedChunk(button), 60);
   };
   window.speechSynthesis.speak(utterance);
+}
+
+function rateForSpeechLang(lang = "") {
+  const lower = lang.toLowerCase();
+  if (lower.startsWith("zh")) return SPEECH_RATE.zh;
+  if (lower.startsWith("ms")) return SPEECH_RATE.ms;
+  if (lower.startsWith("ta")) return SPEECH_RATE.ta;
+  return SPEECH_RATE.en;
 }
 
 function readableItemsForCurrentPage() {

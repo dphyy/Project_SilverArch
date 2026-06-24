@@ -54,7 +54,11 @@ const CATEGORY_RULES = [
   {
     category: "medical",
     label: "Health and medical needs",
-    patterns: [/\b(?:medical bills?|hospital bills?|clinic bills?|doctor bills?|chronic illness|serious illness|disability|disabled|medically unfit|poor health|bone pain|body pain|seeing doctors?|suffer from [^,.!?]{1,35}|sick|treatment|medication|medicine|hospitalised|hospitalized|injured my [^,.!?]{1,24})[^,.!?]{0,40}/gi]
+    patterns: [
+      /\b(?:medical bills?|hospital bills?|clinic bills?|doctor bills?|chronic illness|serious illness|disability|disabled|severe disability|severely disabled|bedbound|medically unfit|poor health|bone pain|body pain|dementia|stroke|frail|seeing doctors?|suffer from [^,.!?]{1,35}|sick|treatment|medication|medicine|hospitalised|hospitalized|injured my [^,.!?]{1,24})[^,.!?]{0,40}/gi,
+      /\b(?:activities of daily living|ADLs?|cannot (?:bathe|bath|shower|dress|toilet|feed|eat|walk|transfer)|needs? help (?:bathing|showering|dressing|toileting|feeding|transferring))[^,.!?]{0,45}/gi,
+      /\b(?:wheelchair|walking frame|walking stick|mobility aid|assistive device|commode|hospital bed|fall risk|difficulty walking)[^,.!?]{0,45}/gi
+    ]
   },
   {
     category: "wellbeing",
@@ -69,7 +73,11 @@ const CATEGORY_RULES = [
   {
     category: "caregiving",
     label: "Caregiving",
-    patterns: [/\b(?:caregiver|caregiving|look after|looking after|take care of|taking care of|care for|full.time carer)[^,.!?]{0,55}/gi]
+    patterns: [
+      /\b(?:caregiver|caregiving|look after|looking after|take care of|taking care of|care for|full.time carer)[^,.!?]{0,55}/gi,
+      /\b(?:caregiver training|training course|learn to care|caregiving skills|dementia care|wound care|how to care)[^,.!?]{0,55}/gi,
+      /\b(?:help (?:with|to) (?:bathe|bath|shower|dress|toilet|feed|eat|transfer)|assist(?:ing)? (?:with )?(?:bathing|showering|dressing|toileting|feeding|transferring))[^,.!?]{0,55}/gi
+    ]
   },
   {
     category: "education",

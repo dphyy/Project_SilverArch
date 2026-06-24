@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { buildReportDraft, redactTranscript, reportDraftReadiness, reportEvidence, reportReadiness, reportTextLines } from "../src/domain/report.mjs";
+import { buildReportDraft, buildReviewCouncil, redactTranscript, reportDraftReadiness, reportEvidence, reportReadiness, reportTextLines } from "../src/domain/report.mjs";
 import { draftReportWithFallback } from "../src/services/report-drafter.mjs";
 import { renderReportDocx, renderReportPdf } from "../src/services/report-renderer.mjs";
 
@@ -98,6 +98,20 @@ test("generated report evidence includes every highlighted component", () => {
   assert.deepEqual([...categories].sort(), ["age", "caregiving", "citizenship", "employment", "income", "medical"]);
   assert.ok(report.evidence.every((entry) => Number.isInteger(entry.startWord) && Number.isInteger(entry.endWord)));
   assert.equal(report.evidence.filter((entry) => entry.text === "can't earn money").length, 1);
+});
+
+test("review council exposes escalation triggers and AIC referral perspective", () => {
+  const item = completeCase();
+  item.translation = { status: "failed" };
+  item.piiProposals[0].status = "proposed";
+  item.callerProfile.missingCoreDetails = ["citizenship", "income"];
+  item.triage.shortlist.push({ schemeId: "aic_hcg", name: "AIC Home Caregiving Grant", reasoning: "Referral consideration only.", insufficientInformation: [], appealRelevant: [], evidenceRefs: [] });
+  const council = buildReviewCouncil(item);
+  assert.equal(council.humanEscalationRequired, true);
+  assert.ok(council.triggers.includes("Unresolved PII proposals"));
+  assert.ok(council.perspectives.some((item) => item.id === "referral-opportunities" && /AIC Home Caregiving Grant/.test(item.summary)));
+  const report = buildReportDraft(item);
+  assert.ok(reportTextLines(report).some((line) => /Review council/.test(line)));
 });
 
 test("report drafting uses MERaLiON first and OpenAI as fallback", async () => {

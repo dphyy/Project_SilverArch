@@ -48,6 +48,14 @@ export async function renderReportDocx(report) {
     heading("5. Recommended follow-up"), body(report.sections.recommendedFollowUp)
   ];
   if (report.sections.safeguardsResolution) children.push(heading("6. Safeguards and review flags"), body(report.sections.safeguardsResolution));
+  if (report.reviewCouncil) {
+    children.push(heading("Review council"), infoTable([
+      ["Human escalation required", report.reviewCouncil.humanEscalationRequired ? "Yes" : "No"],
+      ["Confidence / readiness score", `${report.reviewCouncil.confidenceScore}/100`],
+      ["Escalation triggers", report.reviewCouncil.triggers?.length ? report.reviewCouncil.triggers.join("; ") : "None detected"]
+    ]));
+    for (const perspective of report.reviewCouncil.perspectives || []) children.push(subheading(perspective.title), body(perspective.summary));
+  }
   children.push(heading("7. Schemes for consideration"), body("The following schemes are presented for officer consideration only. This report does not determine eligibility."));
   for (const scheme of report.schemes) {
     children.push(subheading(scheme.name), body(scheme.reasoning));
@@ -95,6 +103,13 @@ export async function renderReportPdf(report) {
     h1("4. Officer assessment"); para(report.sections.assessment);
     h1("5. Recommended follow-up"); para(report.sections.recommendedFollowUp);
     if (report.sections.safeguardsResolution) { h1("6. Safeguards and review flags"); para(report.sections.safeguardsResolution); }
+    if (report.reviewCouncil) {
+      h1("Review council");
+      row("Human escalation required", report.reviewCouncil.humanEscalationRequired ? "Yes" : "No");
+      row("Confidence / readiness score", `${report.reviewCouncil.confidenceScore}/100`);
+      row("Escalation triggers", report.reviewCouncil.triggers?.length ? report.reviewCouncil.triggers.join("; ") : "None detected");
+      for (const perspective of report.reviewCouncil.perspectives || []) { h2(perspective.title); para(perspective.summary); }
+    }
     h1("7. Schemes for consideration"); para("The following schemes are presented for officer consideration only. This report does not determine eligibility.");
     for (const scheme of report.schemes) { h2(scheme.name); para(scheme.reasoning); scheme.appealRelevant.forEach((item) => para(`Appeal-relevant context: ${item}`)); scheme.insufficientInformation.forEach((item) => para(`Unverified information: ${item}`)); }
     h1("8. Evidence excerpts"); if (report.evidence.length) report.evidence.forEach((item) => para(`${formatSeconds(item.start)} - ${item.label}: “${item.text}”${item.requiresVerification ? " (verify)" : ""}`)); else para("No evidence excerpts were retained.");

@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { getTimeGate, dateFromDemoHour } from "../src/domain/time-gate.mjs";
 import { ElevenLabsProvider, transcribeWithFallback } from "../src/services/asr.mjs";
 import { screenUrgency } from "../src/domain/urgency.mjs";
@@ -144,6 +145,17 @@ test("translated testimony highlights citizenship, financial, health and care ev
   assert.ok(evidence.some((item) => item.category === "income" && /can't earn money|don't have enough money/i.test(item.text)));
   assert.ok(evidence.some((item) => item.category === "medical" && /bone pain|poor health|seeing doctors/i.test(item.text)));
   assert.ok(evidence.some((item) => item.category === "caregiving" && /take care of|care for/i.test(item.text)));
+});
+
+test("AIC referral schemes can be shortlisted from care and mobility evidence", () => {
+  const schemes = JSON.parse(readFileSync(new URL("../data/schemes.json", import.meta.url), "utf8"));
+  const text = "My elderly mother is frail and cannot bathe or transfer without help. I am her caregiver and we need a wheelchair and caregiver training.";
+  const words = text.split(" ").map((word, index) => ({ text: word, start: index * 0.4, end: index * 0.4 + 0.3 }));
+  const evidence = extractEvidence({ text, words });
+  const triage = triageTranscript(text, schemes, evidence);
+  assert.equal(triage.shortlist.length, 3);
+  assert.ok(triage.shortlist.some((scheme) => scheme.schemeId.startsWith("aic_")));
+  assert.ok(triage.shortlist.some((scheme) => /referral consideration only/i.test(scheme.reasoning)));
 });
 
 test("hard ceilings remain unknown until stated and only violations exclude", () => {
