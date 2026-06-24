@@ -2,13 +2,14 @@ import { evidenceFromQuote, extractEvidence, mergeEvidence } from "../domain/evi
 
 const EVIDENCE_SCHEMA_HINT = `Return only JSON with this shape:
 [
-  {"category":"citizenship|age|income|employment|medical|wellbeing|family|housing|caregiving|education","quote":"exact short quote copied from the transcript","requiresVerification":false}
+  {"category":"name|citizenship|age|income|employment|medical|wellbeing|family|housing|caregiving|education","quote":"exact short quote copied from the transcript","requiresVerification":false}
 ]`;
 
 const SYSTEM_PROMPT = `You identify officer-review evidence in translated social assistance intake transcripts.
-Return short exact quotes from the transcript only. Do not paraphrase and do not infer facts.
-Prioritize evidence that could justify triage or a supporting report: citizenship or residency, age, financial hardship, employment or inability to work, health or medical needs, wellbeing/safety, family/dependants, housing, caregiving, education or fees.
-Exclude names, NRICs, phone numbers and administrative filler.`;
+Return all relevant short exact quotes from the transcript only. Do not paraphrase and do not infer facts.
+Capture: caller name, citizenship or residency, age, income/financial hardship, employment or inability to work, health or medical needs, wellbeing/safety, family/dependants, housing, caregiving, education or fees.
+Also capture AIC referral signals such as disability, frailty, ADL assistance, mobility or assistive devices, caregiving burden, caregiver training, severe disability, senior care needs, or AIC Link referral relevance.
+Exclude NRICs, phone numbers and administrative filler.`;
 
 export class OpenAIEvidenceExtractor {
   name = "openai";
@@ -42,7 +43,14 @@ export async function extractEvidenceWithAI(transcript = {}, { baseExtractor = e
   if (!ai.configured?.()) return { evidence: deterministic, provider: "deterministic" };
   try {
     const modelEvidence = await ai.extract(transcript);
-    return { evidence: mergeEvidence(deterministic, modelEvidence), provider: modelEvidence.length ? ai.name : "deterministic", modelEvidenceCount: modelEvidence.length };
+    if (!modelEvidence.length) return { evidence: deterministic, provider: "deterministic", modelEvidenceCount: 0, error: "OpenAI returned no timestamp-mappable evidence" };
+    const safetyEvidence = deterministic.filter(isSafetyEvidence);
+    return {
+      evidence: mergeEvidence(modelEvidence, safetyEvidence),
+      provider: safetyEvidence.length ? `${ai.name}+deterministic-safety` : ai.name,
+      modelEvidenceCount: modelEvidence.length,
+      safetyEvidenceCount: safetyEvidence.length
+    };
   } catch (error) {
     return { evidence: deterministic, provider: "deterministic", error: error.message };
   }
@@ -54,4 +62,8 @@ export function evidenceExtractionCapability({ openaiKey = process.env.OPENAI_AP
 
 function stripCodeFence(value) {
   return String(value || "").replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/i, "").trim();
+}
+
+function isSafetyEvidence(item = {}) {
+  return item.category === "wellbeing" || /\b(?:suicid|kill myself|end my life|don'?t want to (?:live|be alive)|unsafe|in danger|family violence|domestic violence)\b/i.test(item.text || "");
 }

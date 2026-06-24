@@ -4,6 +4,7 @@ import { readFileSync } from "node:fs";
 import { getTimeGate, dateFromDemoHour } from "../src/domain/time-gate.mjs";
 import { ElevenLabsProvider, transcribeWithFallback } from "../src/services/asr.mjs";
 import { screenUrgency } from "../src/domain/urgency.mjs";
+import { hasForeignLanguagePlaceholder, normalizeForeignLanguagePlaceholders, requiresEnglishTranslation } from "../src/services/translation.mjs";
 import { proposePiiRedactions } from "../src/domain/pii.mjs";
 import { triageTranscript } from "../src/domain/triage.mjs";
 import { buildCallerProfile, extractEvidence } from "../src/domain/evidence.mjs";
@@ -41,6 +42,7 @@ test("ElevenLabs normalizes word timestamps and language metadata", async () => 
   const fetchImpl = async (_url, options) => {
     assert.equal(options.headers["xi-api-key"], "test-key");
     assert.equal(options.body.get("model_id"), "scribe_v2");
+    assert.equal(options.body.get("file").name, "recording.webm");
     return new Response(JSON.stringify({
       text: "Need help",
       language_code: "en",
@@ -51,6 +53,15 @@ test("ElevenLabs normalizes word timestamps and language metadata", async () => 
   const result = await new ElevenLabsProvider({ apiKey: "test-key", fetchImpl }).transcribe({ buffer: Buffer.from("audio"), mimeType: "audio/webm" });
   assert.equal(result.languageCode, "en");
   assert.deepEqual(result.segments[0], { text: "Need", start: 0.1, end: 0.4 });
+});
+
+test("ElevenLabs sends MP3 demo audio with the correct filename", async () => {
+  const fetchImpl = async (_url, options) => {
+    assert.equal(options.body.get("file").name, "recording.mp3");
+    return new Response(JSON.stringify({ text: "Need help", language_code: "en", words: [] }), { status: 200, headers: { "content-type": "application/json" } });
+  };
+  const result = await new ElevenLabsProvider({ apiKey: "test-key", fetchImpl }).transcribe({ buffer: Buffer.from("audio"), mimeType: "audio/mpeg" });
+  assert.equal(result.languageCode, "en");
 });
 
 test("triage preserves missing facts and appeal context", () => {
@@ -171,6 +182,22 @@ test("urgency categories remain distinct", () => {
   assert.equal(screenUrgency("I want to end my life").category, "self-harm");
   assert.equal(screenUrgency("My partner is attacking me now").category, "family-violence");
   assert.equal(screenUrgency("A stranger has a weapon and I am in danger").category, "immediate-danger");
+});
+
+test("mixed-language ASR placeholders require translation review", () => {
+  const transcript = { text: "My name is Bobby. [speaking foreign language] I need help.", languageCode: "eng" };
+  assert.equal(hasForeignLanguagePlaceholder(transcript.text), true);
+  assert.equal(hasForeignLanguagePlaceholder("I need help. [inaudible] Please call me. [unclear]"), true);
+  assert.equal(normalizeForeignLanguagePlaceholders("Hello [speaking foreign language] I need help"), "Hello [foreign language] I need help");
+  assert.equal(normalizeForeignLanguagePlaceholders("Hello [inaudible] I need help [unclear]"), "Hello [foreign language] I need help [foreign language]");
+  assert.equal(requiresEnglishTranslation(transcript), true);
+  assert.equal(requiresEnglishTranslation({ text: "我需要 help with ComCare", languageCode: "eng" }), true);
+});
+
+test("indirect self-harm wording is treated as urgent", () => {
+  assert.equal(screenUrgency("Sometimes I don't want to be alive anymore").category, "self-harm");
+  assert.equal(screenUrgency("I am not safe for myself tonight").category, "self-harm");
+  assert.equal(screenUrgency("I cannot wait until tomorrow, I need someone to talk to now").category, "self-harm");
 });
 
 test("audio byte ranges support ordinary, suffix and invalid requests", () => {

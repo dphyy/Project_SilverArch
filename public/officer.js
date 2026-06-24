@@ -1,5 +1,6 @@
 const $ = (selector) => document.querySelector(selector);
 let cases = [];
+let selectedCaseId = null;
 
 const escapeHtml = (value = "") => String(value).replace(/[&<>'"]/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", '"': "&quot;" }[char]));
 const formatTime = (seconds = 0) => `${String(Math.floor(seconds / 60)).padStart(2, "0")}:${String(Math.floor(seconds % 60)).padStart(2, "0")}`;
@@ -28,7 +29,7 @@ function renderList() {
     return true;
   });
   $("#case-list").innerHTML = visibleCases.length ? visibleCases.map((item) => `
-    <button class="case-card ${item.urgency?.urgent ? "urgent" : ""}" data-id="${item.id}">
+    <button class="case-card ${item.urgency?.urgent ? "urgent" : ""} ${item.id === selectedCaseId ? "selected" : ""}" data-id="${item.id}" aria-pressed="${item.id === selectedCaseId ? "true" : "false"}">
       <span><strong>${item.urgency?.urgent ? "Urgent risk" : "Voice intake"}</strong><small>${new Date(item.createdAt).toLocaleString("en-SG")}</small></span>
       <span><em>${waiting(item.createdAt)}</em><small>${item.transcript.asrEngine || "ASR failed"}${item.translation?.status === "ready" ? ` · ${item.translation.provider}` : item.translation?.status === "unavailable" ? " · translation unavailable" : ""}</small></span>
     </button>`).join("") : '<div class="empty-card"><strong>No matching cases</strong><p>Adjust the filters or submit a demo recording.</p></div>';
@@ -37,6 +38,17 @@ function renderList() {
 
 function renderDetail(id) {
   const item = cases.find((entry) => entry.id === id);
+  if (!item) {
+    selectedCaseId = null;
+    renderList();
+    $("#case-detail").className = "detail empty";
+    $("#case-detail").innerHTML = "<p>Select a case to review the citizen testimony.</p>";
+    return;
+  }
+  if (selectedCaseId !== id) {
+    selectedCaseId = id;
+    renderList();
+  }
   const flags = [
     ...(item.urgency?.urgent ? [{ kind: "urgent", text: `${item.urgency.reason}: ${item.urgency.resource}` }] : []),
     ...(item.reviewReasons || []).map((text) => ({ kind: "confidence", text })),
@@ -66,11 +78,11 @@ function renderDetail(id) {
   $("#case-detail").className = "detail";
   $("#case-detail").innerHTML = `
     <div class="detail-head"><div><p class="eyebrow">Case ${item.id.slice(0, 8)}</p><h2>Citizen testimony</h2></div><span class="badge">${escapeHtml(item.status)}</span></div>
-    ${item.audioUrl ? `<audio id="case-audio" preload="metadata" src="${item.audioUrl}"></audio><div class="audio-player"><button id="audio-toggle" class="audio-toggle" aria-label="Play recording">▶</button><span id="audio-current">00:00</span><input id="audio-slider" type="range" min="0" max="${duration}" step="0.01" value="0" aria-label="Recording position"><span>${formatTime(duration)}</span></div>` : '<div class="pending">Fixed transcript fixture — no synthetic citizen audio is attached.</div>'}
+    ${item.audioUrl ? `<audio id="case-audio" preload="metadata" src="${item.audioUrl}"></audio><div class="audio-player"><button id="audio-toggle" class="audio-toggle" aria-label="Play recording">▶</button><span id="audio-current">00:00</span><input id="audio-slider" type="range" min="0" max="${duration}" step="0.01" value="0" aria-label="Recording position"><span>${formatTime(duration)}</span></div>` : '<div class="pending">No audio recording is attached to this case.</div>'}
     <section class="contact-card"><div><span>SSO callback number</span><strong>${escapeHtml(item.contact?.phone || "Not collected")}</strong></div><div><span>Intake language</span><strong>${escapeHtml(languageLabel(item.intakeLanguage))}</strong><small>${escapeHtml(item.intakeMode || "web intake")}</small></div>${item.contact?.phone ? `<a class="secondary button" href="tel:${escapeHtml(item.contact.phone)}">Call citizen</a>` : ""}</section>
     <section><h3>Review flags</h3><div class="flag-list">${flags.length ? flags.map((flag) => `<div class="flag ${flag.kind}">${escapeHtml(flag.text)}</div>`).join("") : '<p class="muted">No flags raised.</p>'}</div></section>
     <section class="review-council"><div class="section-head"><h3>Review council</h3><span class="engine">${council.confidenceScore}% confidence</span></div>${council.humanEscalationRequired ? `<div class="escalation-banner">Human escalation required: ${escapeHtml(council.triggers.join(" · "))}</div>` : '<p class="muted">No council escalation trigger detected. Officer judgement still applies.</p>'}<div class="council-grid">${council.perspectives.map((perspective) => `<article class="council-card ${escapeHtml(perspective.status)}"><span>${escapeHtml(perspective.title)}</span><p>${escapeHtml(perspective.summary)}</p></article>`).join("")}</div></section>
-    <section><div class="section-head"><h3>${escapeHtml(primaryTranscript.title)}</h3><span class="engine">${escapeHtml(primaryTranscript.engine)}</span></div><div class="evidence-legend"><span class="dot identity"></span>Personal details <span class="dot financial"></span>Financial <span class="dot wellbeing"></span>Health / wellbeing <span class="dot family"></span>Family / care</div><div class="transcript">${transcriptHtml}</div><p class="audit">Exact word times remain available. Highlighted evidence replays from the beginning of its sentence.${item.transcript.fallbackReason ? ` Fallback reason: ${escapeHtml(item.transcript.fallbackReason)}` : ""}</p>
+    <section><div class="section-head"><h3>${escapeHtml(primaryTranscript.title)}</h3><span class="engine">${escapeHtml(primaryTranscript.engine)}</span></div><div class="evidence-legend"><span class="dot identity"></span>Personal details <span class="dot financial"></span>Financial <span class="dot wellbeing"></span>Health / wellbeing <span class="dot family"></span>Family / care <span class="evidence-source">${escapeHtml(evidenceSourceLabel(item.evidenceProvider))}</span></div><div class="transcript">${transcriptHtml}</div><p class="audit">Exact word times remain available. Highlighted evidence replays from the beginning of its sentence. Evidence: ${escapeHtml(evidenceSourceLabel(item.evidenceProvider))}.${item.evidenceProviderError ? ` Note: ${escapeHtml(item.evidenceProviderError)}` : ""}${item.transcript.fallbackReason ? ` Fallback reason: ${escapeHtml(item.transcript.fallbackReason)}` : ""}</p>
       ${primaryTranscript.isTranslated ? `<div class="translated-block"><div class="section-head"><h3>Original transcript</h3><span class="engine">ASR: ${escapeHtml(item.transcript.asrEngine || "failed")}${item.transcript.languageCode ? ` · ${escapeHtml(item.transcript.languageCode)}` : ""}</span></div><div class="transcript">${originalHtml}</div></div>` : item.translation?.status === "unavailable" ? '<div class="flag confidence">English translation unavailable — language-assisted review required.</div>' : ""}
       <div class="caller-rundown"><p class="eyebrow">Quick caller rundown</p><p>${escapeHtml(profile.summary)}</p><div class="characteristics">${profile.characteristics?.length ? profile.characteristics.map((fact) => `<button class="characteristic seek-audio evidence-${fact.category}" data-start="${Number(fact.sentenceStart ?? fact.start) || 0}"><span>${escapeHtml(fact.label)}${fact.requiresVerification ? " · verify" : ""}</span><strong>“${escapeHtml(fact.value)}”</strong><small>Phrase at ${Number(fact.start || 0).toFixed(1)}s · replay sentence</small></button>`).join("") : '<p class="muted">No key characteristics were automatically identified.</p>'}</div>${profile.missingCoreDetails?.length ? `<div class="missing-details"><strong>Ask next:</strong> ${escapeHtml(profile.missingCoreDetails.join(", "))}</div>` : ""}</div>
     </section>
@@ -79,12 +91,13 @@ function renderDetail(id) {
     <section id="review-section"><h3>Review before report generation</h3><p class="muted">Confirm the source material below. SilverArch will draft the formal report sections automatically, and you can edit the draft before finalizing.</p><div class="officer-profile"><label>Officer name<input id="officer-name" value="${escapeHtml(item.officerProfile?.name || "")}"></label><label>Designation<input id="officer-designation" value="${escapeHtml(item.officerProfile?.designation || "")}"></label><label>Social Service Office<input id="officer-sso" value="${escapeHtml(item.officerProfile?.sso || "")}"></label></div><label class="field-label" for="edit-transcript">Verified transcript</label><textarea id="edit-transcript" class="review-textarea">${escapeHtml(item.transcript.editedText ?? item.transcript.text ?? "")}</textarea><label class="field-label" for="edit-summary">Optional verified caller summary</label><textarea id="edit-summary" class="review-textarea">${escapeHtml(item.callerProfile?.officerSummary ?? item.callerProfile?.summary ?? "")}</textarea><div class="review-confirmations"><label><input id="transcript-reviewed" type="checkbox" ${item.reviewAcknowledgements?.transcriptReviewed ? "checked" : ""}> I reviewed the available audio, transcript and evidence.</label>${item.urgency?.urgent || item.reviewReasons?.length ? `<label><input id="flags-reviewed" type="checkbox" ${item.reviewAcknowledgements?.flagsReviewed ? "checked" : ""}> I considered every review flag. The AI draft may propose formal wording, which I will review before finalization.</label>` : '<input id="flags-reviewed" type="checkbox" class="hidden">'}<label><input id="officer-declaration" type="checkbox" ${item.reviewAcknowledgements?.declaration ? "checked" : ""}> I confirm this report is supporting triage material and not an eligibility determination.</label></div><p id="review-save-status" class="muted">Changes save automatically.</p></section>
     <section><h3>PII redaction proposals</h3><div class="pii-controls">${piiControls || '<p class="muted">No PII proposals.</p>'}</div></section>
     <section><h3>Audit trail</h3><div class="audit-list">${(item.auditEvents || []).map((event) => `<p><strong>${escapeHtml(event.action)}</strong> · ${new Date(event.at).toLocaleString("en-SG")}<br><span>${escapeHtml(event.detail || "")}</span></p>`).join("") || '<p class="muted">No audit events recorded.</p>'}</div></section>
-    <section id="report-readiness" class="report-readiness ${readiness.ready ? "ready" : "blocked"}"><h3>${readiness.ready ? "Ready to generate" : "Report not ready"}</h3>${readiness.ready ? '<p>All required review steps are complete. Generate an editable supporting report draft.</p>' : `<p>Complete the following items:</p><ul>${readiness.missing.map((entry) => `<li>${escapeHtml(entry.label)}</li>`).join("")}</ul>`}</section><div class="actions"><button class="secondary" data-action="needs-review">Keep in review</button><button class="secondary" data-action="escalated">Escalate</button>${reportAction}</div>`;
+    <section id="report-readiness" class="report-readiness ${readiness.ready ? "ready" : "blocked"}"><h3>${readiness.ready ? "Ready to generate" : "Report not ready"}</h3>${readiness.ready ? '<p>All required review steps are complete. Generate an editable supporting report draft.</p>' : `<p>Complete the following items:</p><ul>${readiness.missing.map((entry) => `<li>${escapeHtml(entry.label)}</li>`).join("")}</ul>`}</section><div class="actions">${item.audioUrl ? '<button id="reanalyse-audio" class="secondary">Reanalyse audio</button>' : ""}<button class="secondary" data-action="needs-review">Keep in review</button><button class="secondary" data-action="escalated">Escalate</button>${reportAction}</div>`;
   document.querySelectorAll(".seek-audio").forEach((control) => control.addEventListener("click", () => { const audio = $("#case-audio"); if (audio) seekAndPlay(audio, Number(control.dataset.start)); }));
   document.querySelectorAll("[data-action]").forEach((button) => button.addEventListener("click", () => updateStatus(item.id, button.dataset.action)));
   document.querySelectorAll("[data-pii-index]").forEach((button) => button.addEventListener("click", () => updateCase(item.id, { piiDecision: { index: Number(button.dataset.piiIndex), status: button.dataset.piiStatus } })));
   document.querySelectorAll(".save-reasoning").forEach((button) => button.addEventListener("click", () => updateCase(item.id, { reasoning: { schemeId: button.dataset.schemeId, text: document.querySelector(`.scheme-reasoning[data-scheme-id="${CSS.escape(button.dataset.schemeId)}"]`).value } })));
   setupAutoSave(item.id);
+  $("#reanalyse-audio")?.addEventListener("click", () => reanalyseAudio(item.id));
   $("#generate-report")?.addEventListener("click", () => generateReport(item.id));
   if ($("#case-audio")) setupAudioPlayer(duration);
 }
@@ -94,7 +107,14 @@ function evidenceDisplayTranscript(item) {
     const words = translationWords(item.translation.english);
     return { title: "English translation — highlighted evidence", engine: item.translation.provider || "translation", words, text: item.translation.english?.text || "", highlightEvidence: true, isTranslated: true };
   }
-  return { title: "Original transcript", engine: `ASR: ${item.transcript.asrEngine || "failed"}${item.transcript.languageCode ? ` · ${item.transcript.languageCode}` : ""}`, words: item.transcript.words || item.transcript.segments || [], text: item.transcript.text || "", highlightEvidence: true, isTranslated: false };
+  return { title: "Original transcript", engine: `ASR: ${item.transcript.asrEngine || "failed"} · ${item.transcript.languageCode || "language unknown"}`, words: item.transcript.words || item.transcript.segments || [], text: item.transcript.text || "", highlightEvidence: true, isTranslated: false };
+}
+
+function evidenceSourceLabel(provider = "") {
+  if (provider === "openai") return "AI highlights";
+  if (provider === "openai+deterministic-safety") return "AI highlights + safety rules";
+  if (provider === "deterministic") return "Rule-based highlights";
+  return provider ? `${provider} highlights` : "Evidence highlights";
 }
 
 function callbackPlan(item, evidence = [], profile = {}, shortlist = [], flags = []) {
@@ -295,6 +315,24 @@ async function generateReport(id) {
   else { const body = await response.json(); alert(body.error || "The report could not be generated."); }
 }
 
+async function reanalyseAudio(id) {
+  await flushAutoSave(id);
+  const button = $("#reanalyse-audio");
+  if (button) { button.disabled = true; button.textContent = "Reanalysing…"; }
+  const response = await fetch(`/api/cases/${id}/reanalyse`, { method: "POST" });
+  if (!response.ok) {
+    const body = await response.json().catch(() => ({}));
+    if (button) { button.disabled = false; button.textContent = "Reanalyse audio"; }
+    alert(body.error || "Audio could not be reanalysed.");
+    return;
+  }
+  const updated = await response.json();
+  const index = cases.findIndex((item) => item.id === id);
+  if (index >= 0) cases[index] = updated;
+  renderList();
+  renderDetail(id);
+}
+
 function seekAndPlay(audio, seconds) {
   const seek = () => { audio.currentTime = seconds; audio.play(); };
   if (audio.readyState >= 1) seek(); else audio.addEventListener("loadedmetadata", seek, { once: true });
@@ -366,11 +404,4 @@ async function load() {
 $("#refresh").addEventListener("click", load);
 $("#filter-status").addEventListener("change", renderList);
 $("#filter-reason").addEventListener("change", renderList);
-$("#load-fixtures").addEventListener("click", () => changeFixtures("load"));
-$("#reset-fixtures").addEventListener("click", () => changeFixtures("reset"));
-
-async function changeFixtures(action) {
-  const response = await fetch("/api/demo/fixtures", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ action }) });
-  if (response.ok) await load();
-}
 load();

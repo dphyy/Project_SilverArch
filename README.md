@@ -12,7 +12,7 @@ npm test
 npm run dev
 ```
 
-Open `http://localhost:3000`. Use the **2am · after hours** demo control to exercise recording, then open the Officer view.
+Open `http://localhost:3000`. Use the **2am · after hours** demo control to exercise recording, then open the Officer view. Four tracked MP3 demo calls from `demo/audio/` are also seeded automatically into the officer queue on startup.
 
 ## Configure providers
 
@@ -57,11 +57,13 @@ Important phrases are marked by category—personal details, income/employment/h
 
 The citizen reviews or re-records audio before entering a required Singapore callback number. Officers see the full number only in the selected case. They can edit the verified transcript, summary, facts, shortlist reasoning and notes; confirm or reject PII proposals; and persist a review decision with an audit entry.
 
-Use **Load demo fixtures** to add the seven fixed fictional cases and **Reset fixtures** to remove only those cases.
+The officer dashboard includes a **Reanalyse audio** action for each recorded case. It reprocesses the stored audio through the latest ASR, translation, evidence, urgency, PII and triage pipeline without requiring a new recording.
+
+Four tracked demo MP3 recordings auto-seed as realistic review cases. They are copied from `demo/audio/` into ignored runtime storage under `data/audio/`, then processed like citizen-submitted recordings.
 
 ### Editable supporting reports
 
-The citizen dashboard supports English, Mandarin Chinese, Malay and Tamil. Callers choose a language before consent; translated text appears throughout the web-call flow, and optional local MP3 prompt files can be placed under `public/audio/prompts/`. Missing prompt audio is ignored gracefully.
+The citizen dashboard supports English, Mandarin Chinese, Malay and Tamil. Callers choose a language before consent; translated text appears throughout the web-call flow, and the ear-icon read-aloud uses browser speech synthesis for accessible page instructions.
 
 **Generate report** replaces the former Accept action. It remains disabled until the officer has entered their name, designation and SSO; reviewed the available audio/transcript/evidence; resolved PII proposals; acknowledged review flags where present; and signed the declaration. SilverArch then drafts the formal report sections automatically from the transcript, evidence, caller profile, shortlist and flags. A visible checklist identifies every missing item, and the server independently revalidates the gate.
 

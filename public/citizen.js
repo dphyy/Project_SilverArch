@@ -20,7 +20,7 @@ const COPY = {
   en: {
     statusChecked: "Singapore time checked", demoTime: "Demo time active", titleOpen: "A live officer is available", titleAnswered: "SilverArch has answered",
     openLead: "The ComCare hotline is open daily from 7am to midnight.", closedLead: "The live hotline is closed. You can leave a voice account for next-day review.",
-    openMessage: "A live ComCare officer is available now. SilverArch does not record during hotline hours.", callHotline: "Call 1800-222-0000",
+    openMessage: "A live ComCare officer is available now. SilverArch does not record during hotline hours.", callHotline: "Call\u00A01800-222-0000",
     chooseKicker: "Choose language", chooseTitle: "How would you like to continue?",
     consentNotice: "<strong>No live officer is on this channel.</strong> Your recording will be reviewed on the next working day. Tone and pacing may help an officer prioritise review.",
     consentLabel: "I agree to have my voice recorded and transcribed for ComCare intake.", continue: "Continue",

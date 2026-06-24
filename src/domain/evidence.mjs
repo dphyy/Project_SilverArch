@@ -63,7 +63,7 @@ const CATEGORY_RULES = [
   {
     category: "wellbeing",
     label: "Wellbeing",
-    patterns: [/\b(?:depressed|depression|anxious|anxiety|overwhelmed|distressed|unsafe|in danger|suicid(?:e|al)|kill myself|end my life|family violence)[^,.!?]{0,35}/gi]
+    patterns: [/\b(?:depressed|depression|anxious|anxiety|overwhelmed|distressed|unsafe|in danger|suicid(?:e|al)|kill myself|end my life|don'?t want to (?:live|be alive)|do not want to (?:live|be alive)|not safe for myself|cannot wait until tomorrow|can'?t wait until tomorrow|need someone to talk to now|family violence)[^,.!?]{0,35}/gi]
   },
   {
     category: "housing",

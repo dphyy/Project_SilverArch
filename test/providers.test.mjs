@@ -34,7 +34,7 @@ test("translation falls back to Google text translation with attribution and tim
   assert.equal(result.english.sentences[0].sourceStart, 4);
 });
 
-test("OpenAI evidence extraction augments deterministic highlights with exact quotes", async () => {
+test("OpenAI evidence extraction is primary and maps exact quotes to highlights", async () => {
   const text = "I am from Singapore. I suffer from bone pain. I cannot earn money.";
   const words = text.split(" ").map((word, index) => ({ text: word, start: index * 0.5, end: index * 0.5 + 0.4 }));
   const ai = new OpenAIEvidenceExtractor({ apiKey: "test-key", model: "evidence-model", fetchImpl: async (url, options) => {
@@ -54,4 +54,28 @@ test("OpenAI evidence extraction augments deterministic highlights with exact qu
   assert.ok(result.evidence.some((item) => item.category === "citizenship" && item.source === "openai"));
   assert.ok(result.evidence.some((item) => item.category === "medical"));
   assert.ok(result.evidence.some((item) => item.category === "income"));
+});
+
+test("OpenAI evidence quotes that do not match the transcript are rejected", async () => {
+  const text = "I have no income.";
+  const words = text.split(" ").map((word, index) => ({ text: word, start: index * 0.5, end: index * 0.5 + 0.4 }));
+  const ai = new OpenAIEvidenceExtractor({ apiKey: "test-key", fetchImpl: async () => new Response(JSON.stringify({ output_text: JSON.stringify([
+    { category: "income", quote: "The applicant is unemployed and needs urgent help" }
+  ]) }), { status: 200, headers: { "content-type": "application/json" } }) });
+  const result = await extractEvidenceWithAI({ text, words }, { ai, baseExtractor: () => [] });
+  assert.equal(result.provider, "deterministic");
+  assert.equal(result.evidence.length, 0);
+  assert.match(result.error, /no timestamp-mappable evidence/i);
+});
+
+test("deterministic safety evidence supplements OpenAI highlights", async () => {
+  const text = "I am Singaporean and I don't want to be alive anymore.";
+  const words = text.split(" ").map((word, index) => ({ text: word, start: index * 0.5, end: index * 0.5 + 0.4 }));
+  const ai = new OpenAIEvidenceExtractor({ apiKey: "test-key", fetchImpl: async () => new Response(JSON.stringify({ output_text: JSON.stringify([
+    { category: "citizenship", quote: "I am Singaporean" }
+  ]) }), { status: 200, headers: { "content-type": "application/json" } }) });
+  const result = await extractEvidenceWithAI({ text, words }, { ai });
+  assert.equal(result.provider, "openai+deterministic-safety");
+  assert.ok(result.evidence.some((item) => item.category === "citizenship" && item.source === "openai"));
+  assert.ok(result.evidence.some((item) => item.category === "wellbeing"));
 });

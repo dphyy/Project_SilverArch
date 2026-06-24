@@ -89,9 +89,17 @@ export function reportEvidence(caseItem = {}) {
 }
 
 function evidenceKey(item) {
-  const text = String(item.text).toLowerCase().replace(/\s+/g, " ").trim();
-  if (Number.isInteger(item.startWord) && Number.isInteger(item.endWord)) return `${item.category}:${item.startWord}-${item.endWord}:${text}`;
-  return `${item.category}:${text}:${Number(item.start || 0).toFixed(2)}:${Number(item.end || 0).toFixed(2)}`;
+  const text = normalizeEvidenceForKey(item.text);
+  const start = Number(item.start);
+  const sentenceStart = Number(item.sentenceStart);
+  if (Number.isFinite(start)) return `phrase:${text}:start:${start.toFixed(1)}:sentence:${Number.isFinite(sentenceStart) ? sentenceStart.toFixed(1) : "unknown"}`;
+  if (Number.isInteger(item.startWord) && Number.isInteger(item.endWord)) return `phrase:${text}:words:${item.startWord}-${item.endWord}`;
+  const id = String(item.id || "").trim();
+  return id ? `id:${id}` : `phrase:${text}`;
+}
+
+function normalizeEvidenceForKey(text = "") {
+  return String(text).toLowerCase().replace(/[“”"'.,!?;:()[\]{}]+/g, "").replace(/\s+/g, " ").trim();
 }
 
 export function buildReportMaterial(caseItem = {}) {

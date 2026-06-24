@@ -63,7 +63,7 @@ export class ElevenLabsProvider {
     if (!this.apiKey) throw new AsrUnavailableError("ELEVENLABS_API_KEY is not configured");
     const form = new FormData();
     form.append("model_id", this.model);
-    form.append("file", new Blob([buffer], { type: mimeType }), mimeType.includes("ogg") ? "recording.ogg" : "recording.webm");
+    form.append("file", new Blob([buffer], { type: mimeType }), recordingFilename(mimeType));
     const response = await this.fetch("https://api.elevenlabs.io/v1/speech-to-text", {
       method: "POST",
       headers: { "xi-api-key": this.apiKey },
@@ -89,6 +89,14 @@ export class ElevenLabsProvider {
         : []
     };
   }
+}
+
+function recordingFilename(mimeType = "") {
+  const lower = String(mimeType).toLowerCase();
+  if (lower.includes("mpeg") || lower.includes("mp3")) return "recording.mp3";
+  if (lower.includes("ogg")) return "recording.ogg";
+  if (lower.includes("wav")) return "recording.wav";
+  return "recording.webm";
 }
 
 export async function transcribeWithFallback(audio, {

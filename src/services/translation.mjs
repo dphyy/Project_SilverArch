@@ -1,7 +1,32 @@
+export const MIXED_LANGUAGE_REVIEW_REASON = "Mixed-language speech was retained as [foreign language] because ASR could not transcribe that segment fully — review audio if needed.";
+export const UNKNOWN_LANGUAGE_REVIEW_REASON = "ASR could not confidently identify the spoken language — officer language review is required.";
+
+export function hasForeignLanguagePlaceholder(text = "") {
+  const value = String(text || "");
+  const languagePlaceholder = /\[(?:\s*(?:speaking\s+)?(?:foreign|non-english|another|unknown)\s+language\s*)\]|\b(?:speaking\s+)?foreign language\b/i.test(value);
+  const nonTranscribedSegments = value.match(/\[(?:\s*(?:inaudible|unintelligible|unclear|unknown|noise|silence)\s*)\]/gi) || [];
+  return languagePlaceholder || nonTranscribedSegments.length >= 2;
+}
+
+export function normalizeForeignLanguagePlaceholders(text = "") {
+  return String(text || "")
+    .replace(/\[(?:\s*(?:speaking\s+)?(?:foreign|non-english|another|unknown)\s+language\s*)\]/gi, "[foreign language]")
+    .replace(/\b(?:speaking\s+)?foreign language\b/gi, "[foreign language]")
+    .replace(/\[(?:\s*(?:inaudible|unintelligible|unclear|unknown|noise|silence)\s*)\]/gi, "[foreign language]")
+    .replace(/\[\[foreign language\]\]/gi, "[foreign language]")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+export function hasNonEnglishScript(text = "") {
+  return /\p{Script=Han}|\p{Script=Tamil}/u.test(String(text || ""));
+}
+
 export function requiresEnglishTranslation(transcript = {}) {
   const language = String(transcript.languageCode || "").toLowerCase();
+  if (hasForeignLanguagePlaceholder(transcript.text)) return true;
   if (language && !["en", "eng", "english"].includes(language)) return true;
-  return /\p{Script=Han}|\p{Script=Tamil}/u.test(transcript.text || "");
+  return hasNonEnglishScript(transcript.text);
 }
 
 export function timestampedSentences(transcript = {}) {

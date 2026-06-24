@@ -1,16 +1,16 @@
 import { createServer } from "node:http";
-import { readFile, writeFile, mkdir, unlink } from "node:fs/promises";
+import { copyFile, readFile, writeFile, mkdir, unlink } from "node:fs/promises";
 import { extname, join, normalize } from "node:path";
 import { randomUUID } from "node:crypto";
 import { getTimeGate, dateFromDemoHour } from "./src/domain/time-gate.mjs";
 import { transcribeWithFallback } from "./src/services/asr.mjs";
-import { screenUrgency } from "./src/domain/urgency.mjs";
+import { mergeUrgencyResults, screenUrgency } from "./src/domain/urgency.mjs";
 import { proposePiiRedactions } from "./src/domain/pii.mjs";
 import { triageTranscript } from "./src/domain/triage.mjs";
 import { loadEnv } from "./src/services/env.mjs";
 import { buildCallerProfile, extractEvidence } from "./src/domain/evidence.mjs";
 import { maskPhone, normalizeSingaporePhone } from "./src/domain/contact.mjs";
-import { googleTranslateCapability, transcriptFromTranslation, translateWithFallback } from "./src/services/translation.mjs";
+import { googleTranslateCapability, hasForeignLanguagePlaceholder, MIXED_LANGUAGE_REVIEW_REASON, normalizeForeignLanguagePlaceholders, requiresEnglishTranslation, transcriptFromTranslation, translateWithFallback, UNKNOWN_LANGUAGE_REVIEW_REASON } from "./src/services/translation.mjs";
 import { parseByteRange } from "./src/domain/audio.mjs";
 import { buildReportDraft, reportDraftReadiness, reportReadiness } from "./src/domain/report.mjs";
 import { renderReportDocx, renderReportPdf } from "./src/services/report-renderer.mjs";
@@ -24,7 +24,14 @@ const PUBLIC = join(ROOT, "public");
 const CASES_FILE = join(ROOT, "data", "cases.json");
 const AUDIO_DIR = join(ROOT, "data", "audio");
 const REPORTS_DIR = join(ROOT, "data", "reports");
-const MIME = { ".html": "text/html", ".css": "text/css", ".js": "text/javascript", ".json": "application/json", ".svg": "image/svg+xml", ".mp3": "audio/mpeg", ".wav": "audio/wav", ".ogg": "audio/ogg" };
+const DEMO_AUDIO_DIR = join(ROOT, "demo", "audio");
+const MIME = { ".html": "text/html", ".css": "text/css", ".js": "text/javascript", ".json": "application/json", ".svg": "image/svg+xml", ".mp3": "audio/mpeg", ".wav": "audio/wav", ".ogg": "audio/ogg", ".webm": "audio/webm" };
+const DEMO_AUDIO_CASES = [
+  { id: "demo-audio-en-zh", label: "Demo audio · English + Mandarin", file: "test1-en-zh.mp3", intakeLanguage: "zh", phone: "+6590000001" },
+  { id: "demo-audio-en", label: "Demo audio · English AIC referral", file: "test2-en.mp3", intakeLanguage: "en", phone: "+6590000002" },
+  { id: "demo-audio-ms", label: "Demo audio · Malay long-form", file: "test3-ms.mp3", intakeLanguage: "ms", phone: "+6590000003" },
+  { id: "demo-audio-ta", label: "Demo audio · Tamil safeguard", file: "test4-ta.mp3", intakeLanguage: "ta", phone: "+6590000004" }
+];
 
 async function readCases() {
   try { return JSON.parse(await readFile(CASES_FILE, "utf8")); }
@@ -90,24 +97,6 @@ async function handleApi(request, response, url) {
     return json(response, 200, (await readCases()).map((item) => { const refreshed = refreshCaseAnalysis(item, schemes); return { ...refreshed, reportReadiness: reportReadiness(refreshed, { reportDraftingAvailable }) }; }));
   }
 
-  if (request.method === "POST" && url.pathname === "/api/demo/fixtures") {
-    const input = JSON.parse((await readBody(request, 16 * 1024)).toString("utf8") || "{}");
-    const cases = await readCases();
-    if (input.action === "reset") {
-      const retained = cases.filter((item) => !item.isFixture);
-      await Promise.all(cases.filter((item) => item.isFixture).map((item) => removeReportStore(item.id)));
-      await writeFile(CASES_FILE, `${JSON.stringify(retained, null, 2)}\n`);
-      return json(response, 200, { removed: cases.length - retained.length });
-    }
-    if (input.action !== "load") return json(response, 400, { error: "Demo action must be load or reset" });
-    const definitions = JSON.parse(await readFile(join(ROOT, "data", "fixtures.json"), "utf8"));
-    const schemes = JSON.parse(await readFile(join(ROOT, "data", "schemes.json"), "utf8"));
-    const retained = cases.filter((item) => !item.isFixture);
-    const fixtures = definitions.map((definition, index) => buildFixtureCase(definition, schemes, index));
-    await writeFile(CASES_FILE, `${JSON.stringify([...fixtures, ...retained], null, 2)}\n`);
-    return json(response, 200, { loaded: fixtures.length });
-  }
-
   const readinessMatch = url.pathname.match(/^\/api\/cases\/([A-Za-z0-9-]+)\/report-readiness$/);
   if (request.method === "GET" && readinessMatch) {
     const found = (await readCases()).find((item) => item.id === readinessMatch[1]);
@@ -149,6 +138,34 @@ async function handleApi(request, response, url) {
     cases[caseIndex] = { ...cases[caseIndex], reportSummary: { version: store.draft.version, status: "draft", updatedAt: at }, auditEvents: [...(cases[caseIndex].auditEvents || []), { at, actor: "officer", action: "report-draft-edited", detail: `Supporting report version ${store.draft.version}, revision ${store.draft.revision}` }] };
     await Promise.all([writeReportStore(reportMatch[1], store), writeFile(CASES_FILE, `${JSON.stringify(cases, null, 2)}\n`)]);
     return json(response, 200, store.draft);
+  }
+
+  const reanalyseMatch = url.pathname.match(/^\/api\/cases\/([A-Za-z0-9-]+)\/reanalyse$/);
+  if (request.method === "POST" && reanalyseMatch) {
+    const cases = await readCases();
+    const caseIndex = cases.findIndex((item) => item.id === reanalyseMatch[1]);
+    if (caseIndex < 0) return json(response, 404, { error: "Case not found" });
+    const current = cases[caseIndex];
+    let audio;
+    try { audio = await readStoredAudio(current); }
+    catch (error) { return json(response, error.code === "ENOENT" ? 404 : 500, { error: error.code === "ENOENT" ? "Audio file is no longer available" : error.message }); }
+    const at = new Date().toISOString();
+    const analysis = await analyseAudio(audio, current.audioType);
+    const changed = analysisFingerprint(current) !== analysisFingerprint({ ...current, ...analysis });
+    if (changed) await removeReportStore(current.id);
+    const cleared = changed ? clearStaleReview(current) : current;
+    cases[caseIndex] = {
+      ...cleared,
+      ...analysis,
+      status: changed && ["report-draft", "report-finalized", "accepted"].includes(current.status) ? "needs-review" : current.status,
+      auditEvents: [
+        ...(current.auditEvents || []),
+        ...analysisAuditEvents(analysis, at),
+        { at, actor: "system", action: "audio-reanalysed", detail: changed ? "Audio was reprocessed and generated case analysis changed" : "Audio was reprocessed with no generated analysis changes" }
+      ]
+    };
+    await writeFile(CASES_FILE, `${JSON.stringify(cases, null, 2)}\n`);
+    return json(response, 200, { ...cases[caseIndex], reportReadiness: reportReadiness(cases[caseIndex], { reportDraftingAvailable: reportDraftingCapability() !== "unavailable" }) });
   }
 
   const finalizeMatch = url.pathname.match(/^\/api\/cases\/([A-Za-z0-9-]+)\/report\/finalize$/);
@@ -193,23 +210,12 @@ async function handleApi(request, response, url) {
     const contactPhone = normalizeSingaporePhone(request.headers["x-contact-phone"]);
     if (!contactPhone) return json(response, 400, { error: "A valid Singapore contact number is required." });
     const id = randomUUID();
-    const extension = request.headers["content-type"]?.includes("ogg") ? "ogg" : "webm";
+    const extension = audioExtensionFromType(request.headers["content-type"]);
     await mkdir(AUDIO_DIR, { recursive: true });
     await writeFile(join(AUDIO_DIR, `${id}.${extension}`), audio);
     const audioType = request.headers["content-type"] || "audio/webm";
-    const transcript = await transcribeWithFallback({ buffer: audio, mimeType: audioType });
-    transcript.originalText = transcript.text;
-    const translation = transcript.transcriptionFailed ? { status: "unavailable", errors: ["Transcription failed"] } : await translateWithFallback(transcript, { buffer: audio, mimeType: audioType });
-    const evidenceTranscript = translation.status === "ready" ? transcriptFromTranslation(translation.english) : transcript;
-    const evidenceExtraction = await extractEvidenceWithAI(evidenceTranscript);
-    const evidence = evidenceExtraction.evidence;
-    const lowConfidence = Boolean(transcript.confidenceFlags?.length);
-    const callerProfile = lowConfidence ? { summary: "Automatic summary withheld because the transcript requires confidence review.", characteristics: [], missingCoreDetails: [] } : buildCallerProfile(evidence);
-    const urgency = screenUrgency(transcript.text);
-    const schemes = JSON.parse(await readFile(join(ROOT, "data", "schemes.json"), "utf8"));
-    const triageText = evidenceTranscript.text || transcript.text;
-    const triage = transcript.transcriptionFailed ? { status: "manual-review", shortlist: [], reason: "Transcription failed" } : lowConfidence ? { status: "manual-review", shortlist: [], reason: "Automatic shortlist withheld because transcript confidence is low" } : triageTranscript(triageText, schemes, evidence);
     const createdAt = new Date().toISOString();
+    const analysis = await analyseAudio(audio, audioType);
     const newCase = {
       id,
       createdAt,
@@ -220,23 +226,10 @@ async function handleApi(request, response, url) {
       intakeLanguage: normalizeIntakeLanguage(request.headers["x-intake-language"]),
       intakeMode: "web-call-simulator",
       contact: { phone: contactPhone, maskedPhone: maskPhone(contactPhone), purpose: "SSO follow-up after case review" },
-      transcript,
-      translation,
-      evidence,
-      evidenceLanguage: translation.status === "ready" ? "english" : "original",
-      evidenceVersion: 4,
-      evidenceProvider: evidenceExtraction.provider,
-      ...(evidenceExtraction.error ? { evidenceProviderError: evidenceExtraction.error } : {}),
-      callerProfile,
-      urgency,
-      piiProposals: proposePiiRedactions(transcript.text),
-      triage,
-      reviewReasons: [...(transcript.confidenceFlags || []), ...(triage.status === "manual-review" ? ["Triage requires officer review"] : []), ...(translation.status === "unavailable" && translation.sourceLanguage && !["en", "eng"].includes(translation.sourceLanguage) ? ["English translation unavailable — language-assisted review required"] : [])],
+      ...analysis,
       auditEvents: [
-        { at: createdAt, actor: "system", action: "case-created", detail: `Transcribed by ${transcript.asrEngine || "no provider"}` },
-        ...(transcript.fallbackReason ? [{ at: createdAt, actor: "system", action: "asr-fallback", detail: `MERaLiON fallback: ${transcript.fallbackReason}` }] : []),
-        { at: createdAt, actor: "system", action: `translation-${translation.status}`, detail: translation.provider ? `English translation by ${translation.provider}${translation.fallbackReason ? ` after fallback: ${translation.fallbackReason}` : ""}` : translation.errors?.length ? `Translation unavailable: ${translation.errors.join("; ")}` : "English translation not required" },
-        { at: createdAt, actor: "system", action: `evidence-${evidenceExtraction.provider}`, detail: evidenceExtraction.error ? `Deterministic evidence retained after OpenAI error: ${evidenceExtraction.error}` : evidenceExtraction.provider === "openai" ? `OpenAI added ${evidenceExtraction.modelEvidenceCount || 0} evidence excerpt${evidenceExtraction.modelEvidenceCount === 1 ? "" : "s"}` : "Deterministic evidence extraction" }
+        { at: createdAt, actor: "system", action: "case-created", detail: `Transcribed by ${analysis.transcript.asrEngine || "no provider"}` },
+        ...analysisAuditEvents(analysis, createdAt)
       ]
     };
     const cases = await readCases();
@@ -287,9 +280,8 @@ async function handleApi(request, response, url) {
   if ((request.method === "GET" || request.method === "HEAD") && audioMatch) {
     const found = (await readCases()).find((item) => item.id === audioMatch[1]);
     if (!found) return json(response, 404, { error: "Case not found" });
-    const extension = found.audioType.includes("ogg") ? "ogg" : "webm";
     let audio;
-    try { audio = await readFile(join(AUDIO_DIR, `${found.id}.${extension}`)); }
+    try { audio = await readStoredAudio(found); }
     catch (error) { if (error.code === "ENOENT") return json(response, 404, { error: "Audio file is no longer available" }); throw error; }
     const commonHeaders = { "content-type": found.audioType, "accept-ranges": "bytes", "cache-control": "private, no-store" };
     const range = request.headers.range;
@@ -310,6 +302,163 @@ async function handleApi(request, response, url) {
 
 function cleanObject(input, keys, maxLength) {
   return Object.fromEntries(keys.map((key) => [key, String(input[key] ?? "").slice(0, maxLength)]));
+}
+
+async function analyseAudio(audio, audioType = "audio/webm") {
+  const transcript = await transcribeWithFallback({ buffer: audio, mimeType: audioType });
+  const hasMixedLanguageGap = hasForeignLanguagePlaceholder(transcript.text);
+  if (hasMixedLanguageGap) {
+    transcript.text = normalizeForeignLanguagePlaceholders(transcript.text);
+    transcript.words = ensurePlaceholderWords(transcript.text, transcript.words || transcript.segments || []);
+    transcript.segments = transcript.words.map(({ text, start, end }) => ({ text, start, end }));
+  }
+  transcript.originalText = transcript.text;
+  const reviewFlags = [];
+  if (hasMixedLanguageGap) reviewFlags.push(MIXED_LANGUAGE_REVIEW_REASON);
+  if (!transcript.transcriptionFailed && !transcript.languageCode) {
+    reviewFlags.push(UNKNOWN_LANGUAGE_REVIEW_REASON);
+  }
+  const translationRequired = !transcript.transcriptionFailed && requiresEnglishTranslation(transcript);
+  const translation = transcript.transcriptionFailed ? { status: "unavailable", errors: ["Transcription failed"] } : await translateWithFallback(transcript, { buffer: audio, mimeType: audioType });
+  const evidenceTranscript = translation.status === "ready" ? transcriptFromTranslation(translation.english) : transcript;
+  const evidenceExtraction = await extractEvidenceWithAI(evidenceTranscript);
+  const evidence = evidenceExtraction.evidence;
+  const lowConfidence = Boolean(transcript.confidenceFlags?.length);
+  const callerProfile = lowConfidence ? { summary: "Automatic summary withheld because the transcript requires confidence review.", characteristics: [], missingCoreDetails: [] } : buildCallerProfile(evidence);
+  const urgency = mergeUrgencyResults([
+    screenUrgency(transcript.text),
+    screenUrgency(translation.status === "ready" ? translation.english?.text : ""),
+    screenUrgency(evidence.filter((item) => ["wellbeing", "medical"].includes(item.category)).map((item) => item.text).join(" "))
+  ]);
+  const schemes = JSON.parse(await readFile(join(ROOT, "data", "schemes.json"), "utf8"));
+  const triageText = evidenceTranscript.text || transcript.text;
+  const triage = transcript.transcriptionFailed ? { status: "manual-review", shortlist: [], reason: "Transcription failed" } : lowConfidence ? { status: "manual-review", shortlist: [], reason: "Automatic shortlist withheld because transcript confidence is low" } : triageTranscript(triageText, schemes, evidence);
+  return {
+    transcript,
+    translation,
+    evidence,
+    evidenceLanguage: translation.status === "ready" ? "english" : "original",
+    evidenceVersion: 4,
+    evidenceProvider: evidenceExtraction.provider,
+    ...(evidenceExtraction.error ? { evidenceProviderError: evidenceExtraction.error } : {}),
+    callerProfile,
+    urgency,
+    piiProposals: proposePiiRedactions(transcript.text),
+    triage,
+    reviewReasons: uniqueStrings([...reviewFlags, ...(transcript.confidenceFlags || []), ...(triage.status === "manual-review" ? ["Triage requires officer review"] : []), ...(translation.status === "unavailable" && translationRequired ? ["English translation unavailable — language-assisted review required"] : [])])
+  };
+}
+
+function uniqueStrings(values = []) {
+  return [...new Set(values.filter(Boolean).map((value) => String(value)))];
+}
+
+function ensurePlaceholderWords(text = "", existingWords = []) {
+  const normalized = normalizeForeignLanguagePlaceholders(text);
+  if (!normalized.includes("[foreign language]")) return existingWords;
+  const existingText = existingWords.map((word) => word.text).join(" ");
+  if (existingText.includes("[foreign language]")) return existingWords;
+  const tokens = normalized.match(/\[foreign language\]|\S+/g) || [];
+  if (!tokens.length) return existingWords;
+  const duration = Math.max(...existingWords.map((word) => Number(word.end) || 0), tokens.length * 0.45);
+  const step = duration / tokens.length;
+  return tokens.map((token, index) => ({
+    text: token,
+    start: Number((index * step).toFixed(2)),
+    end: Number(((index + 1) * step).toFixed(2))
+  }));
+}
+
+function analysisAuditEvents(analysis, at) {
+  return [
+    ...(analysis.transcript.fallbackReason ? [{ at, actor: "system", action: "asr-fallback", detail: `MERaLiON fallback: ${analysis.transcript.fallbackReason}` }] : []),
+    { at, actor: "system", action: `translation-${analysis.translation.status}`, detail: analysis.translation.provider ? `English translation by ${analysis.translation.provider}${analysis.translation.fallbackReason ? ` after fallback: ${analysis.translation.fallbackReason}` : ""}` : analysis.translation.errors?.length ? `Translation unavailable: ${analysis.translation.errors.join("; ")}` : "English translation not required" },
+    { at, actor: "system", action: `evidence-${analysis.evidenceProvider}`, detail: evidenceAuditDetail(analysis) }
+  ];
+}
+
+function evidenceAuditDetail(analysis = {}) {
+  if (analysis.evidenceProviderError) return `Rule-based evidence retained after AI evidence issue: ${analysis.evidenceProviderError}`;
+  if (analysis.evidenceProvider === "openai") return `OpenAI selected ${analysis.evidence?.length || 0} timestamped evidence highlight${analysis.evidence?.length === 1 ? "" : "s"}`;
+  if (analysis.evidenceProvider === "openai+deterministic-safety") return "OpenAI evidence used first with rule-based safety supplementation";
+  return "Rule-based evidence extraction";
+}
+
+function analysisFingerprint(item = {}) {
+  return JSON.stringify({
+    transcriptText: item.transcript?.text || "",
+    transcriptLanguage: item.transcript?.languageCode || "",
+    translationStatus: item.translation?.status || "",
+    translationText: item.translation?.english?.text || "",
+    evidence: (item.evidence || []).map(({ category, text, start, end }) => ({ category, text, start, end })),
+    urgency: item.urgency || {},
+    pii: (item.piiProposals || []).map(({ type, value }) => ({ type, value })),
+    shortlist: (item.triage?.shortlist || []).map(({ schemeId, name, reasoning, insufficientInformation }) => ({ schemeId, name, reasoning, insufficientInformation })),
+    reviewReasons: item.reviewReasons || []
+  });
+}
+
+function clearStaleReview(caseItem = {}) {
+  const { reportSummary, reviewAcknowledgements, factReviews, consolidation, officerNote, ...rest } = caseItem;
+  return rest;
+}
+
+function audioExtensionFromType(audioType = "") {
+  const lower = String(audioType).toLowerCase();
+  if (lower.includes("mpeg") || lower.includes("mp3")) return "mp3";
+  if (lower.includes("ogg")) return "ogg";
+  if (lower.includes("wav")) return "wav";
+  return "webm";
+}
+
+async function readStoredAudio(caseItem = {}) {
+  return readFile(join(AUDIO_DIR, `${caseItem.id}.${audioExtensionFromType(caseItem.audioType)}`));
+}
+
+async function seedDemoAudioCases() {
+  await mkdir(AUDIO_DIR, { recursive: true });
+  const cases = await readCases();
+  const retained = cases.filter((item) => !item.isFixture);
+  await Promise.all(cases.filter((item) => item.isFixture).map((item) => removeReportStore(item.id)));
+  const existingIds = new Set(retained.map((item) => item.id));
+  const seeded = [];
+  for (const [index, definition] of DEMO_AUDIO_CASES.entries()) {
+    const source = join(DEMO_AUDIO_DIR, definition.file);
+    const destination = join(AUDIO_DIR, `${definition.id}.mp3`);
+    try {
+      await copyFile(source, destination);
+    } catch (error) {
+      if (error.code === "ENOENT") {
+        console.warn(`Demo audio source missing: ${source}`);
+        continue;
+      }
+      throw error;
+    }
+    if (existingIds.has(definition.id)) continue;
+    const audio = await readFile(destination);
+    const at = new Date(Date.now() - index * 60_000).toISOString();
+    const analysis = await analyseAudio(audio, "audio/mpeg");
+    seeded.push({
+      id: definition.id,
+      isDemoAudio: true,
+      demoLabel: definition.label,
+      createdAt: at,
+      status: "needs-review",
+      audioUrl: `/api/cases/${definition.id}/audio`,
+      audioType: "audio/mpeg",
+      audioDurationMs: 0,
+      intakeLanguage: definition.intakeLanguage,
+      intakeMode: "demo-audio-seed",
+      contact: { phone: definition.phone, maskedPhone: maskPhone(definition.phone), purpose: "SSO follow-up after case review" },
+      ...analysis,
+      auditEvents: [
+        { at, actor: "system", action: "demo-audio-seeded", detail: definition.label },
+        { at, actor: "system", action: "case-created", detail: `Transcribed by ${analysis.transcript.asrEngine || "no provider"}` },
+        ...analysisAuditEvents(analysis, at)
+      ]
+    });
+  }
+  if (seeded.length || retained.length !== cases.length) await writeFile(CASES_FILE, `${JSON.stringify([...seeded, ...retained], null, 2)}\n`);
 }
 
 function normalizeIntakeLanguage(value) {
@@ -341,18 +490,6 @@ function refreshCaseAnalysis(item, schemes) {
   return { ...item, evidence, evidenceVersion: 4, evidenceProvider: item.evidenceProvider || "deterministic", callerProfile: buildCallerProfile(evidence), triage: triageTranscript(triageText, schemes, evidence) };
 }
 
-function buildFixtureCase(definition, schemes, index) {
-  const createdAt = new Date(Date.now() - index * 60_000).toISOString();
-  const words = definition.text.split(/\s+/).map((text, wordIndex) => ({ text, start: wordIndex * 0.45, end: wordIndex * 0.45 + 0.35 }));
-  const transcript = { text: definition.text, originalText: definition.text, words, segments: words, languageCode: definition.languageCode, asrEngine: "fixed-fixture", ...(definition.lowConfidence ? { confidenceFlags: ["Detectable audio-quality problem or missing transcript portion"] } : {}) };
-  const translation = definition.english ? { status: "ready", provider: "fixed-fixture", sourceLanguage: definition.languageCode, targetLanguage: "en", english: { text: definition.english, sentences: [{ id: 0, text: definition.english, sourceStart: 0 }] } } : { status: "not-required", sourceLanguage: definition.languageCode };
-  const analysisTranscript = definition.english ? transcriptFromTranslation(translation.english) : transcript;
-  const evidence = extractEvidence(analysisTranscript);
-  const lowConfidence = Boolean(definition.lowConfidence);
-  const triage = lowConfidence ? { status: "manual-review", shortlist: [], reason: "Automatic shortlist withheld because transcript confidence is low" } : triageTranscript(analysisTranscript.text, schemes, evidence);
-  return { id: `fixture-${definition.id}`, isFixture: true, fixtureLabel: definition.label, createdAt, status: "needs-review", audioUrl: null, audioType: null, audioDurationMs: words.at(-1)?.end * 1000 || 0, intakeLanguage: definition.languageCode === "zh" ? "zh" : "en", intakeMode: "web-call-simulator", contact: { phone: "+6590000000", maskedPhone: "+65 •••• 0000", purpose: "SSO follow-up after case review" }, transcript, translation, evidence, evidenceLanguage: definition.english ? "english" : "original", evidenceVersion: 4, evidenceProvider: "deterministic", callerProfile: lowConfidence ? { summary: "Automatic summary withheld because the transcript requires confidence review.", characteristics: [], missingCoreDetails: [] } : buildCallerProfile(evidence), urgency: screenUrgency(definition.text), piiProposals: proposePiiRedactions(definition.text), triage, reviewReasons: [...(transcript.confidenceFlags || []), ...(triage.status === "manual-review" ? ["Triage requires officer review"] : [])], auditEvents: [{ at: createdAt, actor: "system", action: "fixture-loaded", detail: definition.label }] };
-}
-
 async function serveStatic(response, pathname) {
   const requested = pathname === "/" ? "/index.html" : pathname;
   const safe = normalize(requested).replace(/^(\.\.[/\\])+/, "");
@@ -367,6 +504,8 @@ async function serveStatic(response, pathname) {
     throw error;
   }
 }
+
+await seedDemoAudioCases();
 
 createServer(async (request, response) => {
   try {

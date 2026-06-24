@@ -79,6 +79,23 @@ test("report evidence merges full evidence, caller characteristics and scheme re
   assert.equal(evidence.filter((entry) => entry.text === "no income").length, 1);
 });
 
+test("report evidence deduplicates the same timestamped phrase across report sources", () => {
+  const item = completeCase();
+  item.evidence = [
+    { id: "openai-income-10-12", category: "income", label: "Income and finances", text: "basically zero", start: 20.52, end: 21.3, sentenceStart: 18.1, source: "openai", startWord: 10, endWord: 12 }
+  ];
+  item.callerProfile.characteristics = [
+    { evidenceId: "openai-income-10-12", category: "income", label: "Income and finances", value: "basically zero", start: 20.5, sentenceStart: 18.1, source: "openai" }
+  ];
+  item.triage.shortlist[0].evidenceRefs = [
+    { id: "scheme-income-ref", category: "income", quote: "basically zero", start: 20.5, sentenceStart: 18.1, source: "triage" },
+    { id: "another-scheme-income-ref", category: "financial", quote: "basically zero", start: 20.49, sentenceStart: 18.1, source: "triage" }
+  ];
+  const evidence = reportEvidence(item);
+  assert.equal(evidence.filter((entry) => /basically zero/i.test(entry.text)).length, 1);
+  assert.equal(evidence.find((entry) => /basically zero/i.test(entry.text)).label, "Income and finances");
+});
+
 test("generated report evidence includes every highlighted component", () => {
   const item = completeCase();
   item.evidence = [
